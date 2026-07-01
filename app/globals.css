@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+.dark {
+  /* ── Surfaces — true dark charcoal */
+  --bg:   #1a1a1a;
+  --bg-2: #242424;
+  --bg-3: #2a2a2a;
+  --bg-4: #2a2a2a;
+  --bg-5: #2a2a2a;
+
+  /* ── Borders */
+  --border:   #333333;
+  --border-2: #333333;
+
+  /* ── Text */
+  --text:   #ede0d8;
+  --text-2: #d7c3b4;
+  --text-3: #9f8d80;
+
+  /* ── Copper accent */
+  --accent:    #ffb876;
+  --accent-2:  #ffb876;
+  --accent-3:  rgba(255, 184, 118, 0.18);
+  --accent-bg: rgba(255, 184, 118, 0.07);
+
+  /* ── Copper aliases (matches HTML design file) */
+  --copper:     #ffb876;
+  --copper-dim: #c48241;
+  --copper-on:  #4b2800;
+
+  /* ── HTML design-file surface aliases */
+  --bg-sidebar:   #242424;
+  --bg-card:      #2a2a2a;
+  --border-faint: #333333;
+
+  /* ── Semantic */
+  --success:        #7bd3eb;
+  --success-bg:     rgba(123, 211, 235, 0.07);
+  --success-border: rgba(123, 211, 235, 0.20);
+
+  --danger:        #ffb4ab;
+  --danger-bg:     rgba(255, 180, 171, 0.07);
+  --danger-border: rgba(255, 180, 171, 0.20);
+
+  --warning:        #c48241;
+  --warning-bg:     rgba(196, 130, 65, 0.07);
+  --warning-border: rgba(196, 130, 65, 0.20);
+
+  --info:        #7bd3eb;
+  --info-bg:     rgba(123, 211, 235, 0.07);
+  --info-border: rgba(123, 211, 235, 0.20);
+
+  --radius: 0.5rem;
+
+  /* ── shadcn/ui compatibility */
+  --background:           #1a1a1a;
+  --foreground:           #ede0d8;
+  --card:                 #2a2a2a;
+  --card-foreground:      #ede0d8;
+  --popover:              #2a2a2a;
+  --popover-foreground:   #ede0d8;
+  --primary:              #ffb876;
+  --primary-foreground:   #4b2800;
+  --secondary:            #2a2a2a;
+  --secondary-foreground: #d7c3b4;
+  --muted:                #2a2a2a;
+  --muted-foreground:     #9f8d80;
+  --accent-foreground:    #4b2800;
+  --destructive:          #ffb4ab;
+  --input:                #333333;
+  --ring:                 #ffb876;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-plus-jakarta), system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: var(--accent-bg);
+    color: var(--accent-2);
+  }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+}

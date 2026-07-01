@@ -1,0 +1,312 @@
+'use client'
+
+import { useRef, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+import { useShop } from '@/hooks/useShop'
+import { canUse } from '@/lib/utils/plan-gates'
+import { Upload, ArrowLeft, AlertCircle, Check, Lock } from 'lucide-react'
+import Link from 'next/link'
+import toast from 'react-hot-toast'
+import * as XLSX from 'xlsx'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface PreviewRow {
+  imei: string
+  brand: string
+  model: string
+  processor: string
+  ram: string
+  storage: string
+  purchase_price: number
+  asking_price: number
+  error?: string
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const todayISO = () => new Date().toISOString().slice(0, 10)
+
+function parseSheet(wb: XLSX.WorkBook): PreviewRow[] {
+  const ws = wb.Sheets[wb.SheetNames[0]]
+  const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+  return json.flatMap((row) => {
+    const rawSerial = String(row['Serial Number'] ?? row['IMEI'] ?? row['imei'] ?? '')
+    // Skip placeholder / sample rows
+    const lc = rawSerial.toLowerCase()
+    if (
+      lc.includes('example') ||
+      lc.includes('sample') ||
+      rawSerial === '353012345678901' ||
+      /^0+$/.test(rawSerial.replace(/\D/g, ''))
+    ) return []
+
+    const imei = rawSerial.replace(/\D/g, '')
+    const brand = String(row['Brand'] ?? row['brand'] ?? '')
+    const model = String(row['Model'] ?? row['model'] ?? '')
+    const processor = String(row['Processor'] ?? row['processor'] ?? '')
+    const ram = String(row['RAM'] ?? row['ram'] ?? '')
+    const storage = String(row['Storage'] ?? row['storage'] ?? '')
+    const price = parseFloat(String(row['Purchase Price'] ?? row['purchase_price'] ?? '0'))
+    const askingRaw = String(row['Asking Price'] ?? row['asking_price'] ?? '').trim()
+    const asking = askingRaw ? parseFloat(askingRaw) : 0
+
+    let error: string | undefined
+    if (!/^\d{15}$/.test(imei)) error = 'Invalid serial number'
+    else if (!brand) error = 'Missing brand'
+    else if (!model) error = 'Missing model'
+    else if (isNaN(price) || price <= 0) error = 'Invalid price'
+
+    return {
+      imei, brand, model, processor, ram, storage,
+      purchase_price: price,
+      asking_price: isNaN(asking) || asking < 0 ? 0 : asking,
+      error,
+    }
+  })
+}
+
+// ─── Import content (shown only when plan allows) ─────────────────────────────
+
+function ImportContent() {
+  const router = useRouter()
+  const { shop } = useShop()
+  const [dragging, setDragging] = useState(false)
+  const [rows, setRows] = useState<PreviewRow[]>([])
+  const [fileName, setFileName] = useState('')
+  const [importing, setImporting] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const handleFile = (file: File) => {
+    if (!file.name.match(/\.(xlsx|xls|csv)$/i)) {
+      toast.error('Only .xlsx, .xls, or .csv files are supported')
+      return
+    }
+    setFileName(file.name)
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target?.result, { type: 'array' })
+        const parsed = parseSheet(wb)
+        setRows(parsed)
+        if (!parsed.length) toast.error('No data rows found in the file')
+      } catch {
+        toast.error('Could not parse the file')
+      }
+    }
+    reader.readAsArrayBuffer(file)
+  }
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    const file = e.dataTransfer.files[0]
+    if (file) handleFile(file)
+  }, [])
+
+  const valid = rows.filter((r) => !r.error)
+  const invalid = rows.filter((r) => !!r.error)
+
+  const handleImport = async () => {
+    if (!shop || !valid.length) return
+    setImporting(true)
+    const supabase = createClient()
+    const inserts = valid.map((r) => ({
+      shop_id: shop.id,
+      imei: r.imei,
+      brand: r.brand,
+      model: r.model,
+      specs: { processor: r.processor, ram: r.ram, storage: r.storage },
+      condition: 'used',
+      purchase_price: r.purchase_price,
+      asking_price: r.asking_price,
+      purchase_date: todayISO(),
+      status: 'in_stock',
+    }))
+    // insert in chunks of 50 to avoid payload limits
+    const CHUNK = 50
+    let errors = 0
+    for (let i = 0; i < inserts.length; i += CHUNK) {
+      const { error } = await supabase.from('laptops').insert(inserts.slice(i, i + CHUNK))
+      if (error) errors++
+    }
+    setImporting(false)
+    if (errors) {
+      toast.error('Some rows could not be saved. They may have duplicate serial numbers.')
+    } else {
+      toast.success(`${valid.length} laptop${valid.length !== 1 ? 's' : ''} imported!`)
+      router.push('/inventory')
+    }
+  }
+
+  const downloadTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Serial Number', 'Brand', 'Model', 'RAM', 'Storage', 'Processor', 'Purchase Price', 'Asking Price'],
+    ])
+    ws['!cols'] = [{ wch: 18 }, { wch: 12 }, { wch: 20 }, { wch: 8 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 14 }]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Laptops')
+    XLSX.writeFile(wb, 'shopboss-import-template.xlsx')
+  }
+
+  return (
+    <div style={{ maxWidth: 840, marginInline: 'auto' }}>
+      <Link href="/inventory" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-3)', fontSize: 13, textDecoration: 'none', marginBottom: 20 }}>
+        <ArrowLeft size={14} /> Back to inventory
+      </Link>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h1 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 22, marginBottom: 4 }}>Excel Import</h1>
+          <p style={{ color: 'var(--text-3)', fontSize: 13 }}>Upload a spreadsheet to bulk-add laptops to inventory.</p>
+        </div>
+        <button
+          onClick={downloadTemplate}
+          style={{
+            background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 8,
+            padding: '8px 14px', color: 'var(--text-2)', fontSize: 13, cursor: 'pointer',
+          }}
+        >
+          Download template
+        </button>
+      </div>
+
+      {/* Drop zone */}
+      {!rows.length && (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          onClick={() => fileRef.current?.click()}
+          style={{
+            border: `2px dashed ${dragging ? 'var(--accent)' : 'var(--border)'}`,
+            borderRadius: 12, padding: '56px 24px', textAlign: 'center',
+            cursor: 'pointer', transition: 'border-color 0.15s',
+            background: dragging ? 'var(--accent-bg)' : 'var(--bg-2)',
+          }}
+        >
+          <Upload size={36} style={{ color: dragging ? 'var(--accent)' : 'var(--text-3)', marginBottom: 12 }} />
+          <p style={{ color: 'var(--text)', fontWeight: 600, marginBottom: 6 }}>
+            Drop your Excel or CSV file here
+          </p>
+          <p style={{ color: 'var(--text-3)', fontSize: 13 }}>or click to browse (.xlsx, .xls, .csv)</p>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]) }}
+            style={{ display: 'none' }}
+          />
+        </div>
+      )}
+
+      {/* Preview */}
+      {rows.length > 0 && (
+        <div>
+          {/* Summary bar */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <span style={{ color: 'var(--success)', fontSize: 13 }}>
+                <Check size={13} style={{ verticalAlign: 'middle' }} /> {valid.length} ready to import
+              </span>
+              {invalid.length > 0 && (
+                <span style={{ color: 'var(--danger)', fontSize: 13 }}>
+                  <AlertCircle size={13} style={{ verticalAlign: 'middle' }} /> {invalid.length} with errors (will be skipped)
+                </span>
+              )}
+              <span style={{ color: 'var(--text-3)', fontSize: 13 }}>{fileName}</span>
+            </div>
+            <button
+              onClick={() => { setRows([]); setFileName('') }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontSize: 12 }}
+            >
+              Clear and re-upload
+            </button>
+          </div>
+
+          {/* Preview — first 5 rows */}
+          <p style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 8 }}>
+            Preview — showing first {Math.min(5, rows.length)} of {rows.length} row{rows.length !== 1 ? 's' : ''}
+          </p>
+          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'auto', marginBottom: 16 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                  {['Serial No.', 'Brand', 'Model', 'RAM', 'Storage', 'Purchase', 'Asking', 'Status'].map((h) => (
+                    <th key={h} style={{ padding: '10px 14px', textAlign: 'left', color: 'var(--text-3)', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(0, 5).map((r, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)', opacity: r.error ? 0.55 : 1 }}>
+                    <td style={{ padding: '9px 14px', fontFamily: 'monospace', fontSize: 12, color: 'var(--text-2)' }}>{r.imei || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text)' }}>{r.brand || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text)' }}>{r.model || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-2)' }}>{r.ram || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-2)' }}>{r.storage || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text)' }}>
+                      {r.purchase_price > 0 ? `Rs ${r.purchase_price.toLocaleString('en-PK')}` : '—'}
+                    </td>
+                    <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text-2)' }}>
+                      {r.asking_price > 0 ? `Rs ${r.asking_price.toLocaleString('en-PK')}` : '—'}
+                    </td>
+                    <td style={{ padding: '9px 14px' }}>
+                      {r.error ? (
+                        <span style={{ color: 'var(--danger)', fontSize: 11 }}>
+                          <AlertCircle size={11} style={{ verticalAlign: 'middle' }} /> {r.error}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--success)', fontSize: 11 }}>
+                          <Check size={11} style={{ verticalAlign: 'middle' }} /> OK
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <button
+            onClick={handleImport}
+            disabled={importing || !valid.length}
+            style={{
+              background: 'var(--accent)', border: 'none', borderRadius: 8,
+              padding: '12px 28px', color: 'var(--bg)', fontSize: 14, fontWeight: 600,
+              cursor: importing || !valid.length ? 'not-allowed' : 'pointer',
+              opacity: importing || !valid.length ? 0.7 : 1,
+            }}
+          >
+            {importing ? 'Importing…' : `Import ${valid.length} Laptop${valid.length !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Page — plan-gated ────────────────────────────────────────────────────────
+
+export default function ImportPage() {
+  const { shop } = useShop()
+  if (shop && !canUse(shop.plan, 'excelImport')) {
+    return (
+      <div style={{ maxWidth: 840, marginInline: 'auto' }}>
+        <Link href="/inventory" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-3)', fontSize: 13, textDecoration: 'none', marginBottom: 20 }}>
+          <ArrowLeft size={14} /> Back to inventory
+        </Link>
+        <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 14, padding: '40px 24px', textAlign: 'center', maxWidth: 440, marginInline: 'auto' }}>
+          <Lock size={32} style={{ color: 'var(--text-3)', marginBottom: 12 }} />
+          <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Excel Import requires Pro</h2>
+          <p style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 24 }}>Upgrade to Pro or Boss plan to bulk-import laptops from a spreadsheet.</p>
+          <Link href="/billing" style={{ display: 'inline-block', background: 'var(--accent)', borderRadius: 8, padding: '11px 24px', color: 'var(--bg)', fontWeight: 600, textDecoration: 'none' }}>
+            Upgrade plan →
+          </Link>
+        </div>
+      </div>
+    )
+  }
+  return <ImportContent />
+}

@@ -1,0 +1,52 @@
+ShopBoss Fix Verification
+==================================================
+Supabase: https://pcbwdbzfsnvpeiytpijr.supabase.co
+Time: 2026-06-15T07:22:18.391Z
+
+✅ PASS: Service role reads shops table (basic connectivity)
+       Found 3 shop(s)
+❌ FAIL: daily_cash_records - service role bypasses RLS
+       403 Forbidden - RLS still blocking!
+❌ FAIL: expenses - service role bypasses RLS
+       403 Forbidden - RLS still blocking!
+❌ FAIL: udhaar_payments - service role bypasses RLS
+       403 Forbidden - RLS still blocking!
+❌ FAIL: supplier_credits - service role bypasses RLS
+       403 Forbidden - RLS still blocking!
+❌ FAIL: bank_transactions - service role bypasses RLS
+       403 Forbidden - RLS still blocking!
+✅ PASS: Anon key gets 403 on protected tables (RLS active)
+       Status: 401
+✅ PASS: sales table has core columns
+       Core columns accessible
+✅ PASS: sales table optional columns (bank_reference, notes)
+       Columns missing (OK - retry logic handles this): column sales.bank_reference does not exist
+✅ PASS: udhaar_records table accessible
+       Core udhaar_records columns OK
+✅ PASS: accessory_categories table accessible
+       accessory_categories accessible
+✅ PASS: accessory_transactions table accessible
+       accessory_transactions accessible
+✅ PASS: Dev server responding at localhost:3001
+       HTTP 200 OK
+✅ PASS: API route /api/cash/set-opening responds (not 500)
+       Status 401 (401=expected if not logged in)
+✅ PASS: API route /api/sales/create-owner responds (not 500)
+       Status 401 (401=expected if not logged in)
+✅ PASS: API route /api/udhaar/create-owner responds (not 500)
+       Status 401 (401=expected if not logged in)
+✅ PASS: API route /api/accessories/add-category responds (not 500)
+       Status 401 (401=expected if not logged in)
+
+==================================================
+RESULTS: 12 passed, 5 failed
+==================================================
+
+⚠️  Some tests failed. See details above.
+  - daily_cash_records - service role bypasses RLS: 403 Forbidden - RLS still blocking!
+  - expenses - service role bypasses RLS: 403 Forbidden - RLS still blocking!
+  - udhaar_payments - service role bypasses RLS: 403 Forbidden - RLS still blocking!
+  - supplier_credits - service role bypasses RLS: 403 Forbidden - RLS still blocking!
+  - bank_transactions - service role bypasses RLS: 403 Forbidden - RLS still blocking!
+
+Results saved to verify_results.json

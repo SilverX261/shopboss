@@ -1,0 +1,92 @@
+{
+  "timestamp": "2026-06-15T07:50:51.937Z",
+  "passed": 11,
+  "failed": 6,
+  "results": [
+    {
+      "name": "Service role reads shops table (basic connectivity)",
+      "pass": true,
+      "detail": "Found 3 shop(s)"
+    },
+    {
+      "name": "daily_cash_records - service role bypasses RLS",
+      "pass": false,
+      "detail": "403 Forbidden - RLS still blocking!"
+    },
+    {
+      "name": "expenses - service role bypasses RLS",
+      "pass": false,
+      "detail": "403 Forbidden - RLS still blocking!"
+    },
+    {
+      "name": "udhaar_payments - service role bypasses RLS",
+      "pass": false,
+      "detail": "403 Forbidden - RLS still blocking!"
+    },
+    {
+      "name": "supplier_credits - service role bypasses RLS",
+      "pass": false,
+      "detail": "403 Forbidden - RLS still blocking!"
+    },
+    {
+      "name": "bank_transactions - service role bypasses RLS",
+      "pass": false,
+      "detail": "403 Forbidden - RLS still blocking!"
+    },
+    {
+      "name": "Anon key gets 403 on protected tables (RLS active)",
+      "pass": true,
+      "detail": "Status: 401"
+    },
+    {
+      "name": "sales table has core columns",
+      "pass": true,
+      "detail": "Core columns accessible"
+    },
+    {
+      "name": "sales table optional columns (bank_reference, notes)",
+      "pass": true,
+      "detail": "Columns missing (OK - retry logic handles this): column sales.bank_reference does not exist"
+    },
+    {
+      "name": "udhaar_records table accessible",
+      "pass": true,
+      "detail": "Core udhaar_records columns OK"
+    },
+    {
+      "name": "accessory_categories table accessible",
+      "pass": true,
+      "detail": "accessory_categories accessible"
+    },
+    {
+      "name": "accessory_transactions table accessible",
+      "pass": true,
+      "detail": "accessory_transactions accessible"
+    },
+    {
+      "name": "Dev server responding at localhost:3001",
+      "pass": false,
+      "detail": "HTTP 404"
+    },
+    {
+      "name": "API route /api/cash/set-opening responds (not 500)",
+      "pass": true,
+      "detail": "Status 401 (401=expected if not logged in)"
+    },
+    {
+      "name": "API route /api/sales/create-owner responds (not 500)",
+      "pass": true,
+      "detail": "Status 401 (401=expected if not logged in)"
+    },
+    {
+      "name": "API route /api/udhaar/create-owner responds (not 500)",
+      "pass": true,
+      "detail": "Status 401 (401=expected if not logged in)"
+    },
+    {
+      "name": "API route /api/accessories/add-category responds (not 500)",
+      "pass": true,
+      "detail": "Status 401 (401=expected if not logged in)"
+    }
+  ]
+}

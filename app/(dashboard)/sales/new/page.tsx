@@ -1,0 +1,1128 @@
+'use client'
+
+import { useState, useEffect, useMemo, useCallback, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
+import { useShop } from '@/hooks/useShop'
+import { useDashboard } from '@/components/layout/DashboardContext'
+import {
+  Search, ArrowLeft, ArrowRight, Check, Banknote, Landmark, NotebookPen,
+  Laptop as LaptopIcon, RefreshCw, Plus, X, ChevronDown, ChevronRight as ChevronRightIcon,
+} from 'lucide-react'
+import toast from 'react-hot-toast'
+import Fuse from 'fuse.js'
+import type { AccessoryCategory } from '@/lib/types'
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface StockLaptop {
+  id: string
+  brand: string
+  model: string
+  imei: string
+  specs: Record<string, unknown>
+  purchase_price: number
+  asking_price: number | null
+  purchase_date: string | null
+  added_at: string
+  stock_type?: string | null
+  source_shop_name?: string | null
+  source_shop_price?: number | null
+}
+
+type PaymentType = 'cash' | 'bank_transfer' | 'udhaar'
+type ExchangeCondition = 'good' | 'fair' | 'poor'
+
+interface SaleDetails {
+  sale_price: string
+  payment_type: PaymentType
+  customer_name: string
+  customer_phone: string
+  due_date: string
+  bank_reference: string
+  notes: string
+  cnic: File | null
+}
+
+interface ExchangeInfo {
+  enabled: boolean
+  brand: string
+  model: string
+  condition: ExchangeCondition
+  value: string
+}
+
+interface BundledAccessory {
+  category_id: string
+  name: string
+  cost_per_unit: number
+  available: number
+  qty: number
+}
+
+interface UpgradeItem {
+  uid: string
+  description: string
+  cost: string
+}
+
+interface DowngradeItem {
+  uid: string
+  description: string
+  recovery_value: string
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const fmtRs = (n: number) => `Rs ${Math.round(n).toLocaleString('en-PK')}`
+const todayISO = () => new Date().toISOString().slice(0, 10)
+
+function daysInStock(l: StockLaptop): number {
+  const base = l.purchase_date ? new Date(l.purchase_date) : new Date(l.added_at)
+  return Math.max(0, Math.floor((Date.now() - base.getTime()) / 86_400_000))
+}
+
+function specsLine(specs: Record<string, unknown>): string {
+  return [specs.processor, specs.ram, specs.storage, specs.screen].filter(Boolean).join(' \xb7 ')
+}
+
+const inputStyle: React.CSSProperties = {
+  width: '100%', background: 'var(--bg-3)', border: '1px solid var(--border)',
+  borderRadius: 8, padding: '10px 12px', color: 'var(--text)', fontSize: 14,
+  outline: 'none', boxSizing: 'border-box',
+}
+
+const labelStyle: React.CSSProperties = {
+  display: 'block', color: 'var(--text-2)', fontSize: 12, fontWeight: 600,
+  marginBottom: 5, textTransform: 'uppercase', letterSpacing: 0.5,
+}
+
+const sectionHeadStyle: React.CSSProperties = {
+  color: 'var(--text-2)', fontSize: 12, fontWeight: 600,
+  textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 10,
+}
+
+// ─── Step indicator ───────────────────────────────────────────────────────────
+
+function Steps({ step }: { step: number }) {
+  const labels = ['Find laptop', 'Sale details', 'Confirm']
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}>
+      {labels.map((label, i) => (
+        <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <div style={{
+              width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 12, fontWeight: 700,
+              background: i <= step ? 'var(--accent)' : 'var(--bg-3)',
+              color: i <= step ? 'var(--bg)' : 'var(--text-3)',
+            }}>
+              {i < step ? <Check size={13} /> : i + 1}
+            </div>
+            <span style={{ color: i <= step ? 'var(--text)' : 'var(--text-3)', fontSize: 13, fontWeight: i === step ? 600 : 400 }}>
+              {label}
+            </span>
+          </div>
+          {i < labels.length - 1 && <div style={{ width: 24, height: 1, background: 'var(--border)' }} />}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Step 1: find laptop ──────────────────────────────────────────────────────
+
+function StepFind({ laptops, onSelect }: { laptops: StockLaptop[]; onSelect: (l: StockLaptop) => void }) {
+  const [query, setQuery] = useState('')
+  const fuse = useMemo(
+    () => new Fuse(laptops, { keys: ['brand', 'model', 'imei'], threshold: 0.35, ignoreLocation: true }),
+    [laptops]
+  )
+  const results = query.trim() ? fuse.search(query.trim()).map((r) => r.item) : laptops
+
+  return (
+    <div>
+      <div style={{ position: 'relative', marginBottom: 16 }}>
+        <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)' }} />
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by brand, model, or serial number…"
+          style={{ ...inputStyle, padding: '12px 12px 12px 38px', fontSize: 15 }}
+        />
+      </div>
+
+      {laptops.length === 0 ? (
+        <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '40px', textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-3)', fontSize: 14 }}>No laptops in stock to sell.</p>
+          <Link href="/inventory/add" style={{ display: 'inline-block', marginTop: 14, background: 'var(--accent)', color: 'var(--bg)', borderRadius: 8, padding: '9px 18px', fontWeight: 600, fontSize: 13, textDecoration: 'none' }}>
+            Add a laptop
+          </Link>
+        </div>
+      ) : results.length === 0 ? (
+        <p style={{ color: 'var(--text-3)', fontSize: 14, padding: '24px 4px' }}>No laptops match &quot;{query}&quot;.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {results.map((l) => {
+            const days = daysInStock(l)
+            const isMarket = l.stock_type === 'market'
+            return (
+              <button
+                key={l.id}
+                onClick={() => onSelect(l)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                  background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10,
+                  padding: '14px 16px', cursor: 'pointer', textAlign: 'left', width: '100%',
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <p style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>{l.brand} {l.model}</p>
+                    {isMarket && (
+                      <span style={{ background: 'var(--warning)', color: 'var(--bg)', borderRadius: 5, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>MARKET</span>
+                    )}
+                  </div>
+                  <p style={{ color: 'var(--text-3)', fontSize: 12 }}>{specsLine(l.specs ?? {}) || '—'}</p>
+                  <p style={{ color: 'var(--text-3)', fontSize: 11, fontFamily: 'monospace', marginTop: 2 }}>S/N …{l.imei.slice(-6)}</p>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <p style={{ color: 'var(--text)', fontWeight: 700, fontSize: 14 }}>
+                    {l.asking_price && l.asking_price > 0 ? fmtRs(l.asking_price) : '—'}
+                  </p>
+                  <p style={{ color: days >= 60 ? 'var(--danger)' : days >= 30 ? 'var(--warning)' : 'var(--text-3)', fontSize: 11, fontWeight: 500 }}>
+                    {days}d in stock
+                  </p>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Step 2: sale details ─────────────────────────────────────────────────────
+
+function StepDetails({
+  laptop, details, setDetails, exchange, setExchange,
+  shopAccessories, bundled, setBundled, upgrades, setUpgrades, downgrades, setDowngrades,
+  onBack, onNext, isStaff,
+}: {
+  laptop: StockLaptop
+  details: SaleDetails
+  setDetails: (d: SaleDetails) => void
+  exchange: ExchangeInfo
+  setExchange: (e: ExchangeInfo) => void
+  shopAccessories: AccessoryCategory[]
+  bundled: BundledAccessory[]
+  setBundled: (b: BundledAccessory[]) => void
+  upgrades: UpgradeItem[]
+  setUpgrades: (u: UpgradeItem[]) => void
+  downgrades: DowngradeItem[]
+  setDowngrades: (d: DowngradeItem[]) => void
+  onBack: () => void
+  onNext: () => void
+  isStaff?: boolean
+}) {
+  const set = <K extends keyof SaleDetails>(k: K, v: SaleDetails[K]) => setDetails({ ...details, [k]: v })
+  const setEx = <K extends keyof ExchangeInfo>(k: K, v: ExchangeInfo[K]) => setExchange({ ...exchange, [k]: v })
+
+  const [selectedAccId, setSelectedAccId] = useState('')
+  const [newUpgradeDesc, setNewUpgradeDesc] = useState('')
+  const [newUpgradeCost, setNewUpgradeCost] = useState('')
+  const [newDowngradeDesc, setNewDowngradeDesc] = useState('')
+  const [newDowngradeVal, setNewDowngradeVal] = useState('')
+  const [bundledOpen, setBundledOpen] = useState(false)
+  const [upgradesOpen, setUpgradesOpen] = useState(false)
+  const [downgradesOpen, setDowngradesOpen] = useState(false)
+
+  const price = parseFloat(details.sale_price)
+  const hasPrice = !isNaN(price) && price > 0
+  const exchangeVal = parseFloat(exchange.value) || 0
+
+  const accessoryCost = bundled.reduce((s, b) => s + b.qty * b.cost_per_unit, 0)
+  const upgradeCost   = upgrades.reduce((s, u) => s + (parseFloat(u.cost) || 0), 0)
+  const downgradeSave = downgrades.reduce((s, d) => s + (parseFloat(d.recovery_value) || 0), 0)
+  const trueCOGS      = laptop.purchase_price + accessoryCost + upgradeCost - downgradeSave
+  const suggestedPrice = (laptop.asking_price ?? 0) + accessoryCost + upgradeCost - downgradeSave
+
+  const customerPays = hasPrice ? Math.max(0, price - exchangeVal) : 0
+  const profit = hasPrice ? price - trueCOGS : 0
+  const margin = hasPrice && price > 0 ? (profit / price) * 100 : 0
+
+  const proceed = () => {
+    if (!hasPrice) { toast.error('Enter a valid sale price'); return }
+    if (exchange.enabled) {
+      if (!exchange.brand.trim() || !exchange.model.trim()) { toast.error('Enter the old laptop brand and model'); return }
+      if (!exchangeVal || exchangeVal <= 0) { toast.error('Enter the exchange value'); return }
+    }
+    if (details.payment_type === 'udhaar') {
+      if (!details.customer_name.trim()) { toast.error('Customer name is required for udhaar'); return }
+      if (!details.customer_phone.trim()) { toast.error('Customer phone is required for udhaar'); return }
+      if (!details.due_date) { toast.error('Due date is required for udhaar'); return }
+    }
+    onNext()
+  }
+
+  const payOptions: { key: PaymentType; label: string; icon: React.ReactNode }[] = [
+    { key: 'cash', label: 'Cash', icon: <Banknote size={16} /> },
+    { key: 'bank_transfer', label: 'Bank Transfer', icon: <Landmark size={16} /> },
+    { key: 'udhaar', label: 'Udhaar', icon: <NotebookPen size={16} /> },
+  ]
+
+  const addBtnStyle: React.CSSProperties = {
+    background: 'var(--accent)', border: 'none', borderRadius: 8, padding: '8px 14px',
+    color: 'var(--bg)', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+    display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', flexShrink: 0,
+  }
+  const removeBtnStyle: React.CSSProperties = {
+    background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer',
+    padding: 4, display: 'flex', alignItems: 'center', flexShrink: 0,
+  }
+  const qtyBtnStyle: React.CSSProperties = {
+    width: 26, height: 26, borderRadius: 6, background: 'var(--bg-2)',
+    border: '1px solid var(--border)', color: 'var(--text)', fontSize: 16,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0,
+  }
+  const addonRowStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)',
+  }
+  const addonTotalStyle: React.CSSProperties = {
+    borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8,
+    display: 'flex', justifyContent: 'space-between',
+  }
+
+  const addBundled = () => {
+    const cat = shopAccessories.find((a) => a.id === selectedAccId)
+    if (!cat) return
+    if (bundled.find((b) => b.category_id === cat.id)) { toast.error('Already added'); return }
+    setBundled([...bundled, { category_id: cat.id, name: cat.name, cost_per_unit: cat.cost_per_unit, available: cat.display_qty, qty: 1 }])
+    setSelectedAccId('')
+  }
+
+  const addUpgrade = () => {
+    if (!newUpgradeDesc.trim()) { toast.error('Enter a description'); return }
+    setUpgrades([...upgrades, { uid: `u-${Date.now()}`, description: newUpgradeDesc.trim(), cost: newUpgradeCost }])
+    setNewUpgradeDesc(''); setNewUpgradeCost('')
+  }
+
+  const addDowngrade = () => {
+    if (!newDowngradeDesc.trim()) { toast.error('Enter a description'); return }
+    setDowngrades([...downgrades, { uid: `d-${Date.now()}`, description: newDowngradeDesc.trim(), recovery_value: newDowngradeVal }])
+    setNewDowngradeDesc(''); setNewDowngradeVal('')
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Laptop summary card */}
+      <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 18px', display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 8, background: 'var(--bg-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <LaptopIcon size={20} style={{ color: 'var(--text-2)' }} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <p style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15 }}>{laptop.brand} {laptop.model}</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 12 }}>{specsLine(laptop.specs ?? {}) || '—'} \xb7 S/N …{laptop.imei.slice(-6)}</p>
+        </div>
+        <div style={{ marginLeft: 'auto', textAlign: 'right', flexShrink: 0 }}>
+          <p style={{ color: 'var(--text-3)', fontSize: 11 }}>Asking</p>
+          <p style={{ color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>{laptop.asking_price && laptop.asking_price > 0 ? fmtRs(laptop.asking_price) : '—'}</p>
+        </div>
+      </div>
+
+      {/* Sale price */}
+      <div>
+        <label style={labelStyle}>Sale Price (Rs) *</label>
+        <input
+          type="number"
+          min={0}
+          autoFocus
+          value={details.sale_price}
+          onChange={(e) => set('sale_price', e.target.value)}
+          placeholder={suggestedPrice > 0 ? String(Math.round(suggestedPrice)) : (laptop.asking_price ? String(laptop.asking_price) : '0')}
+          style={{ ...inputStyle, fontSize: 28, fontWeight: 700, padding: '14px 16px' }}
+        />
+        {(accessoryCost > 0 || upgradeCost > 0 || downgradeSave > 0) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+            <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Suggested: {fmtRs(suggestedPrice)}</span>
+            <button
+              type="button"
+              onClick={() => set('sale_price', String(Math.round(suggestedPrice)))}
+              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '2px 8px', color: 'var(--accent-2)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+            >
+              Apply
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ─── Bundled Accessories ─────────────────────────────────────────────── */}
+      <div style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+        <button
+          type="button"
+          onClick={() => setBundledOpen((o) => !o)}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', padding: '14px 16px', cursor: 'pointer' }}
+        >
+          <span style={{ ...sectionHeadStyle, marginBottom: 0 }}>
+            Bundled Accessories{bundled.length > 0 ? ` (${bundled.length})` : ''}
+          </span>
+          {bundledOpen ? <ChevronDown size={15} style={{ color: 'var(--text-3)' }} /> : <ChevronRightIcon size={15} style={{ color: 'var(--text-3)' }} />}
+        </button>
+        {bundledOpen && (
+          <div style={{ padding: '0 16px 14px' }}>
+            {shopAccessories.length === 0 ? (
+              <p style={{ color: 'var(--text-3)', fontSize: 13 }}>No accessories in stock.</p>
+            ) : (
+              <div style={{ display: 'flex', gap: 8, marginBottom: bundled.length > 0 ? 4 : 0 }}>
+                <select
+                  value={selectedAccId}
+                  onChange={(e) => setSelectedAccId(e.target.value)}
+                  style={{ ...inputStyle, flex: 1, padding: '8px 10px', fontSize: 13, background: 'var(--bg-3)' }}
+                >
+                  <option value="">Select accessory…</option>
+                  {shopAccessories.map((a) => (
+                    <option key={a.id} value={a.id} disabled={!!bundled.find((b) => b.category_id === a.id)}>
+                      {a.name} — {fmtRs(a.cost_per_unit)} ({a.display_qty} in stock)
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={addBundled}
+                  disabled={!selectedAccId}
+                  style={{ ...addBtnStyle, opacity: selectedAccId ? 1 : 0.5, cursor: selectedAccId ? 'pointer' : 'not-allowed' }}
+                >
+                  <Plus size={14} /> Add
+                </button>
+              </div>
+            )}
+            {bundled.map((b, i) => (
+              <div key={b.category_id} style={addonRowStyle}>
+                <span style={{ color: 'var(--text)', fontSize: 13, flex: 1, minWidth: 0 }}>{b.name}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button type="button" onClick={() => { if (b.qty > 1) setBundled(bundled.map((x, j) => j === i ? { ...x, qty: x.qty - 1 } : x)) }} style={qtyBtnStyle}>−</button>
+                  <span style={{ color: 'var(--text)', fontSize: 13, minWidth: 20, textAlign: 'center' }}>{b.qty}</span>
+                  <button type="button" onClick={() => { if (b.qty < b.available) setBundled(bundled.map((x, j) => j === i ? { ...x, qty: x.qty + 1 } : x)) }} style={qtyBtnStyle}>+</button>
+                </div>
+                <span style={{ color: 'var(--text-2)', fontSize: 13, minWidth: 70, textAlign: 'right', flexShrink: 0 }}>{fmtRs(b.qty * b.cost_per_unit)}</span>
+                <button type="button" onClick={() => setBundled(bundled.filter((_, j) => j !== i))} style={removeBtnStyle}><X size={14} /></button>
+              </div>
+            ))}
+            {bundled.length > 0 && (
+              <div style={addonTotalStyle}>
+                <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Accessory total</span>
+                <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>{fmtRs(accessoryCost)}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ─── Upgrades / Add-ons ─────────────────────────────────────────────── */}
+      <div style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+        <button
+          type="button"
+          onClick={() => setUpgradesOpen((o) => !o)}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', padding: '14px 16px', cursor: 'pointer' }}
+        >
+          <span style={{ ...sectionHeadStyle, marginBottom: 0 }}>
+            Upgrades / Add-ons{upgrades.length > 0 ? ` (${upgrades.length})` : ''}
+          </span>
+          {upgradesOpen ? <ChevronDown size={15} style={{ color: 'var(--text-3)' }} /> : <ChevronRightIcon size={15} style={{ color: 'var(--text-3)' }} />}
+        </button>
+        {upgradesOpen && (
+          <div style={{ padding: '0 16px 14px' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                value={newUpgradeDesc}
+                onChange={(e) => setNewUpgradeDesc(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addUpgrade() } }}
+                placeholder="e.g. 8GB RAM"
+                style={{ ...inputStyle, flex: 2, padding: '8px 10px', fontSize: 13 }}
+              />
+              <input
+                type="number"
+                min={0}
+                value={newUpgradeCost}
+                onChange={(e) => setNewUpgradeCost(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addUpgrade() } }}
+                placeholder="Cost (Rs)"
+                style={{ ...inputStyle, flex: 1, padding: '8px 10px', fontSize: 13, minWidth: 100 }}
+              />
+              <button type="button" onClick={addUpgrade} style={addBtnStyle}>
+                <Plus size={14} /> Add
+              </button>
+            </div>
+            {upgrades.map((u) => (
+              <div key={u.uid} style={addonRowStyle}>
+                <span style={{ color: 'var(--text)', fontSize: 13, flex: 1 }}>{u.description}</span>
+                <span style={{ color: 'var(--text-2)', fontSize: 13, flexShrink: 0 }}>{u.cost ? fmtRs(parseFloat(u.cost) || 0) : '—'}</span>
+                <button type="button" onClick={() => setUpgrades(upgrades.filter((x) => x.uid !== u.uid))} style={removeBtnStyle}><X size={14} /></button>
+              </div>
+            ))}
+            {upgrades.length > 0 && (
+              <div style={addonTotalStyle}>
+                <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Upgrade total</span>
+                <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>{fmtRs(upgradeCost)}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ─── Removed Components (Downgrades) ────────────────────────────────── */}
+      <div style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+        <button
+          type="button"
+          onClick={() => setDowngradesOpen((o) => !o)}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', padding: '14px 16px', cursor: 'pointer' }}
+        >
+          <span style={{ ...sectionHeadStyle, marginBottom: 0 }}>
+            Removed Components{downgrades.length > 0 ? ` (${downgrades.length})` : ''}
+          </span>
+          {downgradesOpen ? <ChevronDown size={15} style={{ color: 'var(--text-3)' }} /> : <ChevronRightIcon size={15} style={{ color: 'var(--text-3)' }} />}
+        </button>
+        {downgradesOpen && (
+          <div style={{ padding: '0 16px 14px' }}>
+            <p style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 10 }}>
+              Components removed from this laptop — added back to accessories inventory
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                value={newDowngradeDesc}
+                onChange={(e) => setNewDowngradeDesc(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDowngrade() } }}
+                placeholder="e.g. 8GB RAM stick"
+                style={{ ...inputStyle, flex: 2, padding: '8px 10px', fontSize: 13 }}
+              />
+              <input
+                type="number"
+                min={0}
+                value={newDowngradeVal}
+                onChange={(e) => setNewDowngradeVal(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDowngrade() } }}
+                placeholder="Recovery (Rs)"
+                style={{ ...inputStyle, flex: 1, padding: '8px 10px', fontSize: 13, minWidth: 110 }}
+              />
+              <button type="button" onClick={addDowngrade} style={addBtnStyle}>
+                <Plus size={14} /> Add
+              </button>
+            </div>
+            {downgrades.map((d) => (
+              <div key={d.uid} style={addonRowStyle}>
+                <span style={{ color: 'var(--text)', fontSize: 13, flex: 1 }}>{d.description}</span>
+                <span style={{ color: 'var(--success)', fontSize: 13, flexShrink: 0 }}>−{d.recovery_value ? fmtRs(parseFloat(d.recovery_value) || 0) : '—'}</span>
+                <button type="button" onClick={() => setDowngrades(downgrades.filter((x) => x.uid !== d.uid))} style={removeBtnStyle}><X size={14} /></button>
+              </div>
+            ))}
+            {downgrades.length > 0 && (
+              <div style={addonTotalStyle}>
+                <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Recovered value</span>
+                <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: 13 }}>−{fmtRs(downgradeSave)}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Exchange toggle */}
+      <div style={{
+        background: 'var(--bg-3)',
+        border: `1px solid ${exchange.enabled ? 'var(--accent)' : 'var(--border)'}`,
+        borderRadius: 10, padding: '14px 16px',
+      }}>
+        <button
+          type="button"
+          onClick={() => setEx('enabled', !exchange.enabled)}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', width: '100%', textAlign: 'left', padding: 0 }}
+        >
+          <div style={{
+            width: 36, height: 20, borderRadius: 10, flexShrink: 0,
+            background: exchange.enabled ? 'var(--accent)' : 'var(--bg-2)',
+            border: `1px solid ${exchange.enabled ? 'var(--accent)' : 'var(--border)'}`,
+            position: 'relative', transition: 'background 0.2s',
+          }}>
+            <div style={{
+              width: 14, height: 14, borderRadius: '50%', background: exchange.enabled ? 'var(--bg)' : 'var(--text-3)',
+              position: 'absolute', top: 2, left: exchange.enabled ? 18 : 2,
+              transition: 'left 0.2s',
+            }} />
+          </div>
+          <div>
+            <p style={{ color: 'var(--text)', fontSize: 14, fontWeight: 600 }}>Customer is exchanging their old laptop</p>
+            <p style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 2 }}>Credit the customer for their old laptop against this sale</p>
+          </div>
+        </button>
+
+        {exchange.enabled && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Old laptop brand *</label>
+                <input value={exchange.brand} onChange={(e) => setEx('brand', e.target.value)} placeholder="Dell, HP…" style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Model *</label>
+                <input value={exchange.model} onChange={(e) => setEx('model', e.target.value)} placeholder="Latitude 5420…" style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }} />
+              </div>
+            </div>
+            <div>
+              <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Condition *</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+                {(['good', 'fair', 'poor'] as ExchangeCondition[]).map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setEx('condition', c)}
+                    style={{
+                      padding: '9px', border: `1px solid ${exchange.condition === c ? 'var(--accent)' : 'var(--border)'}`,
+                      borderRadius: 7, background: exchange.condition === c ? 'var(--accent-bg)' : 'var(--bg-2)',
+                      color: exchange.condition === c ? 'var(--accent-2)' : 'var(--text-2)',
+                      fontWeight: exchange.condition === c ? 600 : 400, fontSize: 13, cursor: 'pointer', textTransform: 'capitalize',
+                    }}
+                  >{c}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Exchange credit (Rs) *</label>
+              <input
+                type="number" min={0}
+                value={exchange.value}
+                onChange={(e) => setEx('value', e.target.value)}
+                placeholder="25000"
+                style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }}
+              />
+              <p style={{ color: 'var(--text-3)', fontSize: 11, marginTop: 4 }}>Amount you are crediting the customer for their old laptop</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Price breakdown */}
+      {exchange.enabled && hasPrice ? (
+        <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--text-2)', fontSize: 13 }}>New laptop price</span>
+            <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>{fmtRs(price)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--text-2)', fontSize: 13 }}>Exchange credit</span>
+            <span style={{ color: 'var(--danger)', fontSize: 13, fontWeight: 600 }}>−{fmtRs(exchangeVal)}</span>
+          </div>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--text)', fontSize: 15, fontWeight: 700 }}>Customer pays</span>
+            <span style={{ color: 'var(--accent-2)', fontSize: 17, fontWeight: 800 }}>{fmtRs(customerPays)}</span>
+          </div>
+          <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Your profit (sale − true COGS)</span>
+            <span style={{ color: profit >= 0 ? 'var(--success)' : 'var(--danger)', fontSize: 13, fontWeight: 600 }}>{fmtRs(profit)}</span>
+          </div>
+        </div>
+      ) : hasPrice ? (
+        isStaff ? (
+          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: 'var(--text-2)', fontSize: 13 }}>Sale price</span>
+            <span style={{ color: 'var(--text)', fontWeight: 700, fontSize: 16 }}>{fmtRs(price)}</span>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+            {[
+              { label: 'Purchase', value: fmtRs(trueCOGS), color: 'var(--text)' },
+              { label: 'Sale', value: fmtRs(price), color: 'var(--text)' },
+              { label: 'Profit', value: fmtRs(profit), color: profit >= 0 ? 'var(--success)' : 'var(--danger)' },
+              { label: 'Margin', value: `${margin >= 0 ? '+' : ''}${margin.toFixed(1)}%`, color: margin >= 0 ? 'var(--success)' : 'var(--danger)' },
+            ].map((c) => (
+              <div key={c.label} style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
+                <p style={{ color: 'var(--text-3)', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>{c.label}</p>
+                <p style={{ color: c.color, fontWeight: 700, fontSize: 15 }}>{c.value}</p>
+              </div>
+            ))}
+          </div>
+        )
+      ) : null}
+
+      {/* Payment type */}
+      <div>
+        <label style={labelStyle}>Payment Type *</label>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+          {payOptions.map((opt) => {
+            const active = details.payment_type === opt.key
+            return (
+              <button
+                key={opt.key}
+                onClick={() => set('payment_type', opt.key)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                  background: active ? 'var(--accent-bg)' : 'var(--bg-2)',
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                  borderRadius: 9, padding: '12px', cursor: 'pointer',
+                  color: active ? 'var(--accent-2)' : 'var(--text-2)',
+                  fontWeight: active ? 600 : 500, fontSize: 13,
+                }}
+              >
+                {opt.icon} {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Udhaar fields */}
+      {details.payment_type === 'udhaar' && (
+        <div style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ color: 'var(--warning)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Udhaar (credit) details</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Customer name *</label>
+              <input value={details.customer_name} onChange={(e) => set('customer_name', e.target.value)} placeholder="Full name" style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Phone *</label>
+              <input value={details.customer_phone} onChange={(e) => set('customer_phone', e.target.value)} placeholder="03XXXXXXXXX" style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Due date *</label>
+              <input type="date" value={details.due_date} onChange={(e) => set('due_date', e.target.value)} style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>CNIC photo (optional)</label>
+              <input type="file" accept="image/*" onChange={(e) => set('cnic', e.target.files?.[0] ?? null)} style={{ ...inputStyle, padding: '6px 10px', fontSize: 12 }} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bank reference */}
+      {details.payment_type === 'bank_transfer' && (
+        <div>
+          <label style={labelStyle}>Bank reference number (optional)</label>
+          <input value={details.bank_reference} onChange={(e) => set('bank_reference', e.target.value)} placeholder="Transaction / reference no." style={inputStyle} />
+        </div>
+      )}
+
+      {/* Cash customer phone */}
+      {details.payment_type === 'cash' && (
+        <div>
+          <label style={labelStyle}>Customer phone (optional — for receipt)</label>
+          <input value={details.customer_phone} onChange={(e) => set('customer_phone', e.target.value)} placeholder="03XXXXXXXXX" style={inputStyle} />
+        </div>
+      )}
+
+      {/* Notes */}
+      <div>
+        <label style={labelStyle}>Notes (optional)</label>
+        <textarea value={details.notes} onChange={(e) => set('notes', e.target.value)} rows={2} placeholder="Any notes about this sale…" style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <button onClick={onBack} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, padding: '11px 18px', color: 'var(--text-2)', fontSize: 14, cursor: 'pointer' }}>
+          <ArrowLeft size={15} /> Back
+        </button>
+        <button onClick={proceed} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--accent)', border: 'none', borderRadius: 8, padding: '11px 22px', color: 'var(--bg)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+          Review <ArrowRight size={15} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Step 3: confirm ──────────────────────────────────────────────────────────
+
+function StepConfirm({
+  laptop, details, exchange, bundled, upgrades, downgrades, onBack, onConfirm, saving,
+}: {
+  laptop: StockLaptop
+  details: SaleDetails
+  exchange: ExchangeInfo
+  bundled: BundledAccessory[]
+  upgrades: UpgradeItem[]
+  downgrades: DowngradeItem[]
+  onBack: () => void
+  onConfirm: () => void
+  saving: boolean
+}) {
+  const price = parseFloat(details.sale_price)
+  const exchangeVal = parseFloat(exchange.value) || 0
+  const customerPays = Math.max(0, price - exchangeVal)
+  const payLabel = { cash: 'Cash', bank_transfer: 'Bank Transfer', udhaar: 'Udhaar' }[details.payment_type]
+
+  const accessoryCost = bundled.reduce((s, b) => s + b.qty * b.cost_per_unit, 0)
+  const upgradeCost   = upgrades.reduce((s, u) => s + (parseFloat(u.cost) || 0), 0)
+  const downgradeSave = downgrades.reduce((s, d) => s + (parseFloat(d.recovery_value) || 0), 0)
+  const trueCOGS      = laptop.purchase_price + accessoryCost + upgradeCost - downgradeSave
+  const profit = price - trueCOGS
+  const margin = price > 0 ? (profit / price) * 100 : 0
+
+  const rows: [string, string, string?][] = [
+    ['Laptop', `${laptop.brand} ${laptop.model}`],
+    ['Serial No.', `…${laptop.imei.slice(-6)}`],
+    ['Purchase price', fmtRs(laptop.purchase_price)],
+  ]
+
+  if (bundled.length > 0) {
+    bundled.forEach((b) => rows.push([`Accessory: ${b.name}`, `\xd7${b.qty} @ ${fmtRs(b.cost_per_unit)} = ${fmtRs(b.qty * b.cost_per_unit)}`]))
+    rows.push(['Accessory total', fmtRs(accessoryCost)])
+  }
+  if (upgrades.length > 0) {
+    upgrades.forEach((u) => rows.push([`Upgrade: ${u.description}`, fmtRs(parseFloat(u.cost) || 0)]))
+    rows.push(['Upgrade total', fmtRs(upgradeCost)])
+  }
+  if (downgrades.length > 0) {
+    downgrades.forEach((d) => rows.push([`Removed: ${d.description}`, `−${fmtRs(parseFloat(d.recovery_value) || 0)}`, 'var(--success)']))
+    rows.push(['Recovery total', `−${fmtRs(downgradeSave)}`, 'var(--success)'])
+  }
+  if (bundled.length > 0 || upgrades.length > 0 || downgrades.length > 0) {
+    rows.push(['True COGS', fmtRs(trueCOGS)])
+  }
+
+  rows.push(['Sale price', fmtRs(price)])
+
+  if (exchange.enabled) {
+    rows.push(['Exchange credit', `−${fmtRs(exchangeVal)}`, 'var(--danger)'])
+    rows.push(['Customer pays', fmtRs(customerPays), 'var(--accent-2)'])
+    rows.push(['Old laptop', `${exchange.brand} ${exchange.model} (${exchange.condition})`])
+  }
+
+  rows.push(['Profit', `${fmtRs(profit)} (${margin >= 0 ? '+' : ''}${margin.toFixed(1)}%)`, profit >= 0 ? 'var(--success)' : 'var(--danger)'])
+  rows.push(['Payment', payLabel])
+
+  if (details.payment_type === 'udhaar') {
+    rows.push(['Customer', details.customer_name])
+    rows.push(['Phone', details.customer_phone])
+    rows.push(['Due date', details.due_date])
+  }
+  if (details.payment_type === 'bank_transfer' && details.bank_reference) rows.push(['Bank ref', details.bank_reference])
+  if (details.payment_type === 'cash' && details.customer_phone) rows.push(['Customer phone', details.customer_phone])
+  if (details.notes) rows.push(['Notes', details.notes])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+        {rows.map(([label, value, color], i) => (
+          <div key={`${label}-${i}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '12px 18px', borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none' }}>
+            <span style={{ color: 'var(--text-3)', fontSize: 13 }}>{label}</span>
+            <span style={{ color: color ?? 'var(--text)', fontSize: 13, fontWeight: 600, textAlign: 'right' }}>{value}</span>
+          </div>
+        ))}
+      </div>
+
+      {exchange.enabled && (
+        <div style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <RefreshCw size={14} style={{ color: 'var(--accent-2)', flexShrink: 0 }} />
+          <p style={{ color: 'var(--text-2)', fontSize: 13 }}>
+            Old laptop ({exchange.brand} {exchange.model}) will be added to inventory at {fmtRs(exchangeVal)}.
+          </p>
+        </div>
+      )}
+
+      {downgrades.length > 0 && (
+        <div style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
+          <p style={{ color: 'var(--text-2)', fontSize: 13 }}>
+            {downgrades.length} removed component{downgrades.length > 1 ? 's' : ''} will be added back to accessories inventory.
+          </p>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <button onClick={onBack} disabled={saving} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, padding: '11px 18px', color: 'var(--text-2)', fontSize: 14, cursor: saving ? 'not-allowed' : 'pointer' }}>
+          <ArrowLeft size={15} /> Back
+        </button>
+        <button onClick={onConfirm} disabled={saving} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--accent)', border: 'none', borderRadius: 8, padding: '11px 26px', color: 'var(--bg)', fontSize: 14, fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
+          {saving ? 'Recording…' : 'Confirm Sale'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Market stock prompt ──────────────────────────────────────────────────────
+
+function MarketPromptModal({ laptop, shopId, onDone }: { laptop: StockLaptop; shopId: string; onDone: () => void }) {
+  const [logging, setLogging] = useState(false)
+
+  const handleYes = async () => {
+    setLogging(true)
+    const supabase = createClient()
+    await supabase.from('supplier_credits').insert({
+      shop_id: shopId,
+      laptop_id: laptop.id,
+      supplier_name: laptop.source_shop_name || 'Market stock',
+      amount_owed: laptop.source_shop_price || 0,
+      amount_paid: 0,
+      status: 'pending',
+    })
+    setLogging(false)
+    onDone()
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
+      <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 14, padding: '28px 24px', width: '100%', maxWidth: 420 }}>
+        <p style={{ color: 'var(--text)', fontWeight: 700, fontSize: 17, marginBottom: 10 }}>Market Stock Sold</p>
+        <p style={{ color: 'var(--text-2)', fontSize: 14, lineHeight: 1.65, marginBottom: 22 }}>
+          This was market stock from{' '}
+          <strong style={{ color: 'var(--text)' }}>{laptop.source_shop_name || 'another shop'}</strong>.
+          {laptop.source_shop_price ? ` You owe them ${fmtRs(laptop.source_shop_price)}.` : ''}
+          {' '}Log this as a supplier payment?
+        </p>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            onClick={handleYes}
+            disabled={logging}
+            style={{ flex: 1, background: 'var(--accent)', border: 'none', borderRadius: 8, padding: '11px', color: 'var(--bg)', fontWeight: 600, fontSize: 14, cursor: logging ? 'not-allowed' : 'pointer', opacity: logging ? 0.7 : 1 }}
+          >
+            {logging ? 'Logging…' : 'Yes, log it'}
+          </button>
+          <button
+            onClick={onDone}
+            disabled={logging}
+            style={{ flex: 1, background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, padding: '11px', color: 'var(--text-2)', fontWeight: 500, fontSize: 14, cursor: 'pointer' }}
+          >
+            No, dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Success ──────────────────────────────────────────────────────────────────
+
+function SuccessScreen({ profit, exchanged, onAnother, isStaff }: { profit: number; exchanged: boolean; onAnother: () => void; isStaff?: boolean }) {
+  return (
+    <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 14, padding: '40px 24px', textAlign: 'center' }}>
+      <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--success-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+        <Check size={28} style={{ color: 'var(--success)' }} />
+      </div>
+      <h2 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 20, marginBottom: isStaff ? 24 : 6 }}>Sale recorded</h2>
+      {!isStaff && (
+        <p style={{ color: profit >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 700, fontSize: 18, marginBottom: exchanged ? 8 : 24 }}>
+          Profit: {fmtRs(profit)}
+        </p>
+      )}
+      {exchanged && !isStaff && (
+        <p style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 24 }}>
+          Old laptop added to inventory as used stock.
+        </p>
+      )}
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+        <button onClick={onAnother} style={{ background: 'var(--accent)', border: 'none', borderRadius: 8, padding: '10px 20px', color: 'var(--bg)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+          Record another
+        </button>
+        <Link href="/sales" style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 20px', color: 'var(--text-2)', fontWeight: 500, fontSize: 14, textDecoration: 'none' }}>
+          View sales
+        </Link>
+      </div>
+    </div>
+  )
+}
+
+const BLANK_DETAILS: SaleDetails = {
+  sale_price: '', payment_type: 'cash', customer_name: '', customer_phone: '',
+  due_date: '', bank_reference: '', notes: '', cnic: null,
+}
+
+const BLANK_EXCHANGE: ExchangeInfo = {
+  enabled: false, brand: '', model: '', condition: 'fair', value: '',
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+function NewSaleInner() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const { shop } = useShop()
+  const { isStaff } = useDashboard()
+  const [laptops, setLaptops] = useState<StockLaptop[]>([])
+  const [shopAccessories, setShopAccessories] = useState<AccessoryCategory[]>([])
+  const [loading, setLoading] = useState(true)
+  const [step, setStep] = useState(0)
+  const [selected, setSelected] = useState<StockLaptop | null>(null)
+  const [details, setDetails] = useState<SaleDetails>(BLANK_DETAILS)
+  const [exchange, setExchange] = useState<ExchangeInfo>(BLANK_EXCHANGE)
+  const [bundled, setBundled] = useState<BundledAccessory[]>([])
+  const [upgrades, setUpgrades] = useState<UpgradeItem[]>([])
+  const [downgrades, setDowngrades] = useState<DowngradeItem[]>([])
+  const [saving, setSaving] = useState(false)
+  const [doneProfit, setDoneProfit] = useState<number | null>(null)
+  const [showMarketPrompt, setShowMarketPrompt] = useState(false)
+
+  const load = useCallback(async () => {
+    if (!shop) return
+    const supabase = createClient()
+    const [{ data: laptopData }, { data: accData }] = await Promise.all([
+      supabase
+        .from('laptops')
+        .select('id, brand, model, imei, specs, purchase_price, asking_price, purchase_date, added_at, stock_type, source_shop_name, source_shop_price')
+        .eq('shop_id', shop.id)
+        .eq('status', 'in_stock')
+        .order('added_at', { ascending: false }),
+      supabase
+        .from('accessory_categories')
+        .select('*')
+        .eq('shop_id', shop.id)
+        .gt('display_qty', 0)
+        .order('name'),
+    ])
+    setLaptops((laptopData ?? []) as StockLaptop[])
+    setShopAccessories((accData ?? []) as AccessoryCategory[])
+    setLoading(false)
+  }, [shop])
+
+  useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    const id = searchParams.get('laptop')
+    if (id && laptops.length && !selected) {
+      const match = laptops.find((l) => l.id === id)
+      if (match) { setSelected(match); setStep(1) }
+    }
+  }, [searchParams, laptops, selected])
+
+  const handleConfirm = async () => {
+    if (!selected || !shop) return
+    setSaving(true)
+
+    const fd = new FormData()
+    fd.append('laptop_id', selected.id)
+    fd.append('sale_price', details.sale_price)
+    fd.append('payment_type', details.payment_type)
+    fd.append('customer_name', details.customer_name)
+    fd.append('customer_phone', details.customer_phone)
+    fd.append('due_date', details.due_date)
+    fd.append('bank_reference', details.bank_reference)
+    fd.append('notes', details.notes)
+    if (details.cnic) fd.append('cnic_photo', details.cnic)
+
+    if (exchange.enabled) {
+      fd.append('is_exchange', 'true')
+      fd.append('exchange_value', exchange.value)
+      fd.append('exchange_laptop_model', `${exchange.brand} ${exchange.model}`)
+      fd.append('exchange_laptop_condition', exchange.condition)
+    }
+
+    const saleAddons = {
+      accessories: bundled.map((b) => ({ category_id: b.category_id, name: b.name, qty: b.qty, cost_per_unit: b.cost_per_unit })),
+      upgrades: upgrades.filter((u) => u.description.trim()).map((u) => ({ description: u.description.trim(), cost: parseFloat(u.cost) || 0 })),
+      downgrades: downgrades.filter((d) => d.description.trim()).map((d) => ({ description: d.description.trim(), recovery_value: parseFloat(d.recovery_value) || 0 })),
+    }
+    fd.append('sale_addons', JSON.stringify(saleAddons))
+
+    try {
+      const res = await fetch('/api/sales/create-owner', { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!res.ok) { toast.error(json?.error ?? 'Could not record the sale. Please try again.'); setSaving(false); return }
+
+      if (exchange.enabled) {
+        const supabase = createClient()
+        const fakeImei = `99${Date.now().toString().slice(-13)}`
+        await supabase.from('laptops').insert({
+          shop_id: shop.id,
+          imei: fakeImei,
+          brand: exchange.brand.trim(),
+          model: exchange.model.trim(),
+          specs: {},
+          condition: exchange.condition,
+          purchase_price: parseFloat(exchange.value) || 0,
+          asking_price: 0,
+          purchase_date: todayISO(),
+          status: 'in_stock',
+          notes: `Received as exchange — ${todayISO()}`,
+        })
+      }
+
+      const profit = json.profit ?? (parseFloat(details.sale_price) - selected.purchase_price)
+      setDoneProfit(profit)
+      if (selected.stock_type === 'market') setShowMarketPrompt(true)
+    } catch {
+      toast.error('No internet connection. Please check your network.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const reset = () => {
+    setStep(0); setSelected(null); setDetails(BLANK_DETAILS); setExchange(BLANK_EXCHANGE)
+    setBundled([]); setUpgrades([]); setDowngrades([])
+    setDoneProfit(null); setShowMarketPrompt(false)
+    router.replace('/sales/new')
+    load()
+  }
+
+  return (
+    <div style={{ maxWidth: 680, marginInline: 'auto' }}>
+      <Link href="/sales" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-3)', fontSize: 13, textDecoration: 'none', marginBottom: 20 }}>
+        <ArrowLeft size={14} /> Back to sales
+      </Link>
+
+      <h1 style={{ color: 'var(--text)', fontWeight: 700, fontSize: 32, marginBottom: 18 }}>Record a Sale</h1>
+
+      {showMarketPrompt && selected && shop && (
+        <MarketPromptModal laptop={selected} shopId={shop.id} onDone={() => setShowMarketPrompt(false)} />
+      )}
+
+      {doneProfit !== null && !showMarketPrompt ? (
+        <SuccessScreen profit={doneProfit} exchanged={exchange.enabled} onAnother={reset} isStaff={isStaff} />
+      ) : doneProfit === null ? (
+        <>
+          <Steps step={step} />
+          {loading ? (
+            <p style={{ color: 'var(--text-3)', fontSize: 14 }}>Loading inventory…</p>
+          ) : step === 0 ? (
+            <StepFind
+              laptops={laptops}
+              onSelect={(l) => {
+                setSelected(l)
+                setDetails((d) => ({ ...d, sale_price: l.asking_price && l.asking_price > 0 ? String(l.asking_price) : '' }))
+                setBundled([]); setUpgrades([]); setDowngrades([])
+                setStep(1)
+              }}
+            />
+          ) : step === 1 && selected ? (
+            <StepDetails
+              laptop={selected}
+              details={details}
+              setDetails={setDetails}
+              exchange={exchange}
+              setExchange={setExchange}
+              shopAccessories={shopAccessories}
+              bundled={bundled}
+              setBundled={setBundled}
+              upgrades={upgrades}
+              setUpgrades={setUpgrades}
+              downgrades={downgrades}
+              setDowngrades={setDowngrades}
+              onBack={() => setStep(0)}
+              onNext={() => setStep(2)}
+              isStaff={isStaff}
+            />
+          ) : step === 2 && selected ? (
+            <StepConfirm
+              laptop={selected}
+              details={details}
+              exchange={exchange}
+              bundled={bundled}
+              upgrades={upgrades}
+              downgrades={downgrades}
+              onBack={() => setStep(1)}
+              onConfirm={handleConfirm}
+              saving={saving}
+            />
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+export default function NewSalePage() {
+  return (
+    <Suspense fallback={<div style={{ color: 'var(--text-3)', fontSize: 14 }}>Loading…</div>}>
+      <NewSaleInner />
+    </Suspense>
+  )
+}

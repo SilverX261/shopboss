@@ -1,0 +1,100 @@
+
+> shopboss@0.1.0 build
+> next build
+
+  ▲ Next.js 14.2.35
+  - Environments: .env.local
+
+   Creating an optimized production build ...
+> [PWA] Compile server
+> [PWA] Compile server
+> [PWA] Compile client (static)
+> [PWA] Auto register service worker with: E:\Claude Code\ShopBoss\shopboss\node_modules\next-pwa\register.js
+> [PWA] Service worker: E:\Claude Code\ShopBoss\shopboss\public\sw.js
+> [PWA]   url: /sw.js
+> [PWA]   scope: /
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/64) ...
+   Generating static pages (16/64) 
+   Generating static pages (32/64) 
+   Generating static pages (48/64) 
+ ✓ Generating static pages (64/64)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                              Size     First Load JS
+┌ ƒ /                                    6.34 kB         103 kB
+├ ○ /_not-found                          156 B          87.9 kB
+├ ƒ /accessories                         8.06 kB         167 kB
+├ ƒ /accessories/verify                  2.97 kB         171 kB
+├ ƒ /admin                               4.53 kB         164 kB
+├ ƒ /api/accessories/add-category        0 B                0 B
+├ ƒ /api/auth/create-shop                0 B                0 B
+├ ƒ /api/cash/bank-entry                 0 B                0 B
+├ ƒ /api/cash/close                      0 B                0 B
+├ ƒ /api/cash/set-opening                0 B                0 B
+├ ƒ /api/count/fire                      0 B                0 B
+├ ƒ /api/count/submit                    0 B                0 B
+├ ƒ /api/expenses/create                 0 B                0 B
+├ ƒ /api/imei-lookup                     0 B                0 B
+├ ƒ /api/inventory/export                0 B                0 B
+├ ƒ /api/monitor/screenshot              0 B                0 B
+├ ƒ /api/push/subscribe                  0 B                0 B
+├ ƒ /api/sales/create                    0 B                0 B
+├ ƒ /api/sales/create-owner              0 B                0 B
+├ ƒ /api/sales/void                      0 B                0 B
+├ ƒ /api/sales/void-request              0 B                0 B
+├ ƒ /api/snapshot/create                 0 B                0 B
+├ ƒ /api/snapshot/diff                   0 B                0 B
+├ ƒ /api/udhaar/check-approval           0 B                0 B
+├ ƒ /api/udhaar/create-owner             0 B                0 B
+├ ƒ /api/udhaar/request-approval         0 B                0 B
+├ ƒ /api/udhaar/submit                   0 B                0 B
+├ ƒ /api/whatsapp/cash-gap               0 B                0 B
+├ ƒ /api/whatsapp/count-result           0 B                0 B
+├ ƒ /api/whatsapp/low-stock              0 B                0 B
+├ ƒ /api/whatsapp/notify                 0 B                0 B
+├ ƒ /api/whatsapp/receipt                0 B                0 B
+├ ƒ /api/whatsapp/sale-alert             0 B                0 B
+├ ƒ /api/whatsapp/test                   0 B                0 B
+├ ƒ /api/whatsapp/udhaar-alert           0 B                0 B
+├ ƒ /api/whatsapp/webhook                0 B                0 B
+├ ƒ /api/worker/auth                     0 B                0 B
+├ ƒ /billing                             4.68 kB         164 kB
+├ ƒ /cash                                6.45 kB         174 kB
+├ ƒ /cash/close                          4.7 kB          172 kB
+├ ƒ /cash/expense                        3.74 kB         171 kB
+├ ƒ /dashboard                           12.6 kB         180 kB
+├ ƒ /inventory                           6.02 kB         183 kB
+├ ƒ /inventory/add                       5.36 kB         173 kB
+├ ƒ /inventory/import                    4.67 kB         311 kB
+├ ○ /landing                             866 B          97.3 kB
+├ ○ /login                               2.59 kB         170 kB
+├ ƒ /monitor                             9.14 kB         172 kB
+├ ƒ /onboarding                          5.76 kB         165 kB
+├ ○ /pricing                             156 B          87.9 kB
+├ ƒ /reports                             125 kB          423 kB
+├ ○ /reset-password                      2.05 kB         170 kB
+├ ○ /reset-password/confirm              2.67 kB         170 kB
+├ ƒ /sales                               5.9 kB          312 kB
+├ ƒ /sales/new                           5.91 kB         183 kB
+├ ƒ /settings                            5.47 kB         312 kB
+├ ○ /signup                              4.41 kB         172 kB
+├ ƒ /udhaar                              6.79 kB         174 kB
+├ ƒ /udhaar/new                          4.45 kB         172 kB
+├ ○ /verify-email                        2 kB            161 kB
+├ ƒ /workers                             13.9 kB         182 kB
+└ ƒ /workers/[id]/activity               2.94 kB         166 kB
++ First Load JS shared by all            87.7 kB
+  ├ chunks/2117-1df7a70435619726.js      31.9 kB
+  ├ chunks/fd9d1056-5a7137ce1df24a6c.js  53.6 kB
+  └ other shared chunks (total)          2.18 kB
+
+
+ƒ Middleware                             83 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
