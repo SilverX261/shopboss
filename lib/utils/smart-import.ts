@@ -59,7 +59,9 @@ const IGNORED_HEADERS: { pattern: RegExp; reason: string }[] = [
 // (e.g. "Buying Price" must hit purchase before the generic price → asking rule).
 const FIELD_MATCHERS: { field: Field; pattern: RegExp }[] = [
   { field: 'serial', pattern: /serial|imei|s\/n|service\s*tag|barcode/ },
-  { field: 'qty', pattern: /^(qty|quantity|units?|count|pcs|pieces)$/ },
+  // Prefix match so "Qty.", "QTY (units)" and "No of Units" work; the lookahead
+  // keeps quantity-like words in price headers ("Unit Price") from matching.
+  { field: 'qty', pattern: /^(?:no\.?\s*of\s*)?(?:qty|quantity|units?|count|pcs|pieces)\b(?![\w\s]*(?:price|cost|rate))/ },
   { field: 'purchase', pattern: /purchase|cost|buy(ing)?\s*price/ },
   { field: 'asking', pattern: /asking|rate|sell(ing)?\s*price|mrp|price/ },
   { field: 'brand', pattern: /brand|make|company/ },
