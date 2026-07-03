@@ -58,7 +58,6 @@ export async function POST() {
 
   // 1 — Gather current state
   const [
-    { count: laptopCount },
     { data: laptopValues },
     { data: cashRecords },
     { data: accessoryCategories },
@@ -67,12 +66,7 @@ export async function POST() {
   ] = await Promise.all([
     supabase
       .from('laptops')
-      .select('id', { count: 'exact', head: true })
-      .eq('shop_id', shop.id)
-      .eq('status', 'in_stock'),
-    supabase
-      .from('laptops')
-      .select('purchase_price')
+      .select('purchase_price, quantity')
       .eq('shop_id', shop.id)
       .eq('status', 'in_stock'),
     supabase
@@ -96,8 +90,14 @@ export async function POST() {
       .eq('is_active', true),
   ])
 
+  const laptopCount = (laptopValues ?? []).reduce(
+    (s: number, l: { quantity: number | null }) => s + (l.quantity ?? 1),
+    0
+  )
+
   const totalLaptopValue = (laptopValues ?? []).reduce(
-    (s: number, l: { purchase_price: number }) => s + l.purchase_price,
+    (s: number, l: { purchase_price: number; quantity: number | null }) =>
+      s + l.purchase_price * (l.quantity ?? 1),
     0
   )
 

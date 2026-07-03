@@ -65,7 +65,7 @@ export async function POST() {
 
   // Gather current state
   const [
-    { count: currentLaptopCount },
+    { data: currentLaptops },
     { data: salesSince },
     { data: cashSince },
     { data: udhaarSince },
@@ -75,7 +75,7 @@ export async function POST() {
   ] = await Promise.all([
     supabase
       .from('laptops')
-      .select('id', { count: 'exact', head: true })
+      .select('quantity')
       .eq('shop_id', shop.id)
       .eq('status', 'in_stock'),
     supabase
@@ -140,7 +140,10 @@ export async function POST() {
     accessoriesDelta < 0 && Math.abs(accessoriesDelta) > soldRevenue * 0.15
 
   const stockBefore = lastSnapshot.laptop_count ?? 0
-  const stockAfter = currentLaptopCount ?? 0
+  const stockAfter = (currentLaptops ?? []).reduce(
+    (s: number, l: { quantity: number | null }) => s + (l.quantity ?? 1),
+    0
+  )
 
   // Worker flagging: void attempts or unusual activity volume
   const otpRequests = (otpSince as unknown as { count: number })?.count ?? 0

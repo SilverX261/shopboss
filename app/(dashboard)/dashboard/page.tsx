@@ -784,18 +784,18 @@ export default function DashboardPage() {
         supabase.from('sales').select('sale_price,profit,laptops(purchase_price)').eq('shop_id', shop.id).eq('is_voided', false).gte('sold_at', monthStart).lte('sold_at', monthEnd),
         supabase.from('accessory_transactions').select('value').eq('shop_id', shop.id).eq('transaction_type', 'sale').gte('created_at', monthStart).lte('created_at', monthEnd),
         supabase.from('expenses').select('amount').eq('shop_id', shop.id).gte('expense_date', monthStartDate).lte('expense_date', monthEndDate),
-        supabase.from('laptops').select('purchase_price').eq('shop_id', shop.id).eq('status', 'in_stock'),
+        supabase.from('laptops').select('purchase_price, quantity').eq('shop_id', shop.id).eq('status', 'in_stock'),
         supabase.from('udhaar_records').select('amount_remaining').eq('shop_id', shop.id).in('status', ['pending', 'partial', 'overdue']),
       ]),
       Promise.all([
-        supabase.from('laptops').select('id', { count: 'exact', head: true }).eq('shop_id', shop.id).eq('status', 'in_stock').gte('days_in_stock', 60),
-        supabase.from('laptops').select('id', { count: 'exact', head: true }).eq('shop_id', shop.id).eq('status', 'in_stock').gte('days_in_stock', 90),
+        supabase.from('laptops').select('quantity').eq('shop_id', shop.id).eq('status', 'in_stock').gte('days_in_stock', 60),
+        supabase.from('laptops').select('quantity').eq('shop_id', shop.id).eq('status', 'in_stock').gte('days_in_stock', 90),
         supabase.from('udhaar_records').select('amount_remaining').eq('shop_id', shop.id).eq('status', 'overdue'),
         supabase.from('supplier_credits').select('amount_owed,amount_paid').eq('shop_id', shop.id).neq('status', 'paid').lte('due_date', weekFromNow).gte('due_date', today),
         supabase.from('accessory_categories').select('name,units_restocked,units_sold').eq('shop_id', shop.id).gt('units_restocked', 0),
         supabase.from('daily_cash_records').select('is_closed').eq('shop_id', shop.id).eq('record_date', yesterday).maybeSingle(),
         supabase.from('udhaar_payments').select('amount_paid').eq('shop_id', shop.id).eq('payment_date', today),
-        supabase.from('laptops').select('id', { count: 'exact', head: true }).eq('shop_id', shop.id).eq('status', 'in_stock'),
+        supabase.from('laptops').select('quantity').eq('shop_id', shop.id).eq('status', 'in_stock'),
       ]),
     ])
 
@@ -805,7 +805,7 @@ export default function DashboardPage() {
     const monthSales = (salesRes.data ?? []) as unknown as { sale_price: number; profit: number; laptops: { purchase_price: number } | null }[]
     const monthAccSales = (accRes.data ?? []) as { value: number }[]
     const monthExp = (expRes.data ?? []) as { amount: number }[]
-    const stockLaps = (stockRes.data ?? []) as { purchase_price: number }[]
+    const stockLaps = (stockRes.data ?? []) as { purchase_price: number; quantity: number | null }[]
     const udhaarRows = (udhaarRes.data ?? []) as { amount_remaining: number }[]
 
     const monthLapRevenue = monthSales.reduce((s, r) => s + r.sale_price, 0)
@@ -817,7 +817,7 @@ export default function DashboardPage() {
     }, 0)
     const monthExp_ = monthExp.reduce((s, e) => s + e.amount, 0)
     const monthProfit = monthRevenue - monthCOGS - monthExp_
-    const stockValue = stockLaps.reduce((s, l) => s + l.purchase_price, 0)
+    const stockValue = stockLaps.reduce((s, l) => s + l.purchase_price * (l.quantity ?? 1), 0)
     const udhaarOut = udhaarRows.reduce((s, u) => s + u.amount_remaining, 0)
 
     setTodayRevenue(accResult.revenue)
@@ -832,16 +832,17 @@ export default function DashboardPage() {
     const supplierDue = supRows.reduce((s, c) => s + (c.amount_owed - c.amount_paid), 0)
     const lowAcc = accCats.filter(c => c.units_restocked > 0 && c.units_sold / c.units_restocked >= 0.8).map(c => c.name)
     const udhaarRecovToday = (udhaarRecovRes.data ?? []).reduce((s: number, p: { amount_paid: number }) => s + p.amount_paid, 0)
-    const laptopCountNum = laptopCountRes.count ?? 0
+    const laptopCountNum = ((laptopCountRes.data ?? []) as { quantity: number | null }[]).reduce((s, l) => s + (l.quantity ?? 1), 0)
 
     setSystemLaptopCount(laptopCountNum)
 
     // Best day this month: compare today's profit to max seen
     const avgProfit = monthSales.length > 0 ? monthSales.reduce((s, r) => s + r.profit, 0) / monthSales.length : 0
 
+    const sumQty = (rows: unknown) => ((rows ?? []) as { quantity: number | null }[]).reduce((s, l) => s + (l.quantity ?? 1), 0)
     setAlertCounts({
-      laptops60Plus: lap60Res.count ?? 0,
-      laptops90Plus: lap90Res.count ?? 0,
+      laptops60Plus: sumQty(lap60Res.data),
+      laptops90Plus: sumQty(lap90Res.data),
       udhaarOverdueCount: udhaarOvRows.length,
       udhaarOverdueAmount: udhaarOvRows.reduce((s, u) => s + u.amount_remaining, 0),
       supplierDueThisWeek: supplierDue,
@@ -908,7 +909,7 @@ export default function DashboardPage() {
     try {
       const supabase = createClient()
       const [{ data: stockData }, { data: udhaarData }, { data: accCatData }, { data: allSalesData }, { data: supData }] = await Promise.all([
-        supabase.from('laptops').select('purchase_price').eq('shop_id', shop.id).eq('status', 'in_stock'),
+        supabase.from('laptops').select('purchase_price, quantity').eq('shop_id', shop.id).eq('status', 'in_stock'),
         supabase.from('udhaar_records').select('amount_remaining').eq('shop_id', shop.id).in('status', ['pending', 'partial', 'overdue']),
         supabase.from('accessory_categories').select('total_value_added,total_value_sold').eq('shop_id', shop.id),
         supabase.from('sales').select('id').eq('shop_id', shop.id).eq('is_voided', false).gte('sold_at', localDayISO() + 'T00:00:00'),
@@ -922,8 +923,8 @@ export default function DashboardPage() {
         supabase.from('expenses').select('amount').eq('shop_id', shop.id).eq('payment_type', 'bank'),
       ])
 
-      const stockValue = (stockData ?? []).reduce((s: number, l: { purchase_price: number }) => s + l.purchase_price, 0)
-      const laptopCount = (stockData ?? []).length
+      const stockValue = (stockData ?? []).reduce((s: number, l: { purchase_price: number; quantity: number | null }) => s + l.purchase_price * (l.quantity ?? 1), 0)
+      const laptopCount = (stockData ?? []).reduce((s: number, l: { quantity: number | null }) => s + (l.quantity ?? 1), 0)
       const udhaarOut = (udhaarData ?? []).reduce((s: number, u: { amount_remaining: number }) => s + u.amount_remaining, 0)
       const accValue = (accCatData ?? []).reduce((s: number, c: { total_value_added: number; total_value_sold: number }) => s + (c.total_value_added - c.total_value_sold), 0)
       const supplierOwed = (supData ?? []).reduce((s: number, c: { amount_owed: number; amount_paid: number }) => s + (c.amount_owed - c.amount_paid), 0)
@@ -977,13 +978,13 @@ export default function DashboardPage() {
       const supabase = createClient()
       const snapTime = lastSnapshot.created_at
       const [{ data: stockNow }, { data: udhaarNow }, { data: soldSince }, { data: expSince }] = await Promise.all([
-        supabase.from('laptops').select('purchase_price').eq('shop_id', shop.id).eq('status', 'in_stock'),
+        supabase.from('laptops').select('quantity').eq('shop_id', shop.id).eq('status', 'in_stock'),
         supabase.from('udhaar_records').select('amount_remaining').eq('shop_id', shop.id).in('status', ['pending', 'partial', 'overdue']),
         supabase.from('sales').select('sale_price').eq('shop_id', shop.id).eq('is_voided', false).gte('sold_at', snapTime),
         supabase.from('expenses').select('amount').eq('shop_id', shop.id).gte('created_at', snapTime),
       ])
       const accResult = await loadDailyAccounting(supabase, shop.id)
-      const stockAfterCount = (stockNow ?? []).length
+      const stockAfterCount = (stockNow ?? []).reduce((s: number, l: { quantity: number | null }) => s + (l.quantity ?? 1), 0)
       const udhaarAfter = (udhaarNow ?? []).reduce((s: number, u: { amount_remaining: number }) => s + u.amount_remaining, 0)
       const soldSinceData = soldSince ?? []
       const soldRevenue = soldSinceData.reduce((s: number, sl: { sale_price: number }) => s + sl.sale_price, 0)

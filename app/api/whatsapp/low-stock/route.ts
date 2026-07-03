@@ -22,12 +22,12 @@ export async function POST(request: Request) {
   const THRESHOLD = 3
   const { data: laptops } = await supabase
     .from('laptops')
-    .select('brand')
+    .select('brand, quantity')
     .eq('shop_id', shop.id)
     .eq('status', 'in_stock')
 
   const byBrand: Record<string, number> = {}
-  ;(laptops ?? []).forEach((l: { brand: string }) => { byBrand[l.brand] = (byBrand[l.brand] ?? 0) + 1 })
+  ;(laptops ?? []).forEach((l: { brand: string; quantity: number | null }) => { byBrand[l.brand] = (byBrand[l.brand] ?? 0) + (l.quantity ?? 1) })
   const low = Object.entries(byBrand).filter(([, c]) => c <= THRESHOLD)
 
   if (!low.length) return NextResponse.json({ success: true, no_alert: true })

@@ -539,7 +539,7 @@ export default function InventoryPage() {
     const potentialRevenue = inStock.reduce((s, l) => s + (l.asking_price || 0) * units(l), 0)
     const totalDays = inStock.reduce((s, l) => s + daysInStock(l), 0)
     return {
-      count: inStock.length,
+      count: inStock.reduce((s, l) => s + units(l), 0),
       stockValue,
       potentialRevenue,
       potentialProfit: potentialRevenue - stockValue,

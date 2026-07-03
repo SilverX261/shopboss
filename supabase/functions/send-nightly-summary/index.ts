@@ -56,7 +56,7 @@ Deno.serve(async () => {
       supabase.from('cash_records').select('record_type, amount').eq('shop_id', shop.id).gte('created_at', todayStart),
       supabase.from('udhaar_records').select('total_amount').eq('shop_id', shop.id).gte('created_at', todayStart),
       supabase.from('accessory_transactions').select('value, transaction_type').eq('shop_id', shop.id).gte('created_at', todayStart),
-      supabase.from('laptops').select('id', { count: 'exact', head: true }).eq('shop_id', shop.id).eq('status', 'in_stock'),
+      supabase.from('laptops').select('quantity').eq('shop_id', shop.id).eq('status', 'in_stock'),
       supabase.from('udhaar_records').select('id', { count: 'exact', head: true }).eq('shop_id', shop.id).in('status', ['pending', 'partial']).lt('due_date', today),
     ])
 
@@ -76,7 +76,10 @@ Deno.serve(async () => {
       .filter((t: { transaction_type: string }) => ['sale', 'udhaar'].includes(t.transaction_type))
       .reduce((s: number, t: { value: number }) => s + t.value, 0)
 
-    const stockCount = stockRes.count ?? 0
+    const stockCount = (stockRes.data ?? []).reduce(
+      (s: number, l: { quantity: number | null }) => s + (l.quantity ?? 1),
+      0
+    )
     const overdueCount = overdueRes.count ?? 0
 
     const date = new Date().toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' })

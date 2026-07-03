@@ -608,8 +608,11 @@ function MonthlyReport({ shopId }: { shopId: string }) {
 interface StockLaptop {
   id: string; brand: string; model: string; purchase_price: number; asking_price: number
   status: string; added_at: string; purchase_date: string | null
+  quantity: number | null; is_bulk: boolean | null
   sales: { sold_at: string }[] | null
 }
+
+const lapUnits = (l: StockLaptop) => (l.is_bulk ? Math.max(0, l.quantity ?? 1) : 1)
 
 const lapDaysInStock = (l: StockLaptop) =>
   Math.max(0, Math.floor((Date.now() - new Date(l.purchase_date ?? l.added_at).getTime()) / 86400000))
@@ -639,7 +642,7 @@ function StockReport({ shopId }: { shopId: string }) {
   useEffect(() => {
     const supabase = createClient()
     Promise.all([
-      supabase.from('laptops').select('id,brand,model,purchase_price,asking_price,status,added_at,purchase_date,sales(sold_at)').eq('shop_id', shopId),
+      supabase.from('laptops').select('id,brand,model,purchase_price,asking_price,status,added_at,purchase_date,quantity,is_bulk,sales(sold_at)').eq('shop_id', shopId),
       supabase.from('sales').select('profit,sale_price,laptops(brand,model,purchase_price)').eq('shop_id', shopId).eq('is_voided', false),
     ]).then(([{ data: laps }, { data: sls }]) => {
       setLaptops((laps ?? []) as StockLaptop[])
@@ -651,8 +654,8 @@ function StockReport({ shopId }: { shopId: string }) {
   const inStock = laptops.filter(l => l.status === 'in_stock')
   const sold = laptops.filter(l => l.status === 'sold')
 
-  const inventoryValue = inStock.reduce((s, l) => s + l.purchase_price, 0)
-  const potentialRevenue = inStock.reduce((s, l) => s + l.asking_price, 0)
+  const inventoryValue = inStock.reduce((s, l) => s + l.purchase_price * lapUnits(l), 0)
+  const potentialRevenue = inStock.reduce((s, l) => s + l.asking_price * lapUnits(l), 0)
   const potentialProfit = potentialRevenue - inventoryValue
 
   const agingBuckets = [
@@ -662,7 +665,7 @@ function StockReport({ shopId }: { shopId: string }) {
     { label: '90+ days (dead stock)', min: 91, max: Infinity },
   ].map(b => {
     const items = inStock.filter(l => lapDaysInStock(l) >= b.min && (b.max === Infinity ? true : lapDaysInStock(l) <= b.max))
-    return { ...b, count: items.length, value: items.reduce((s, l) => s + l.purchase_price, 0), items }
+    return { ...b, count: items.reduce((s, l) => s + lapUnits(l), 0), value: items.reduce((s, l) => s + l.purchase_price * lapUnits(l), 0), items }
   })
 
   const soldWithDates = sold.filter(l => lapSoldAt(l) && l.added_at)
@@ -734,7 +737,7 @@ function StockReport({ shopId }: { shopId: string }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
-        <Card label="INVENTORY VALUE" value={fmtRs(inventoryValue)} sub={`${inStock.length} units at cost`} />
+        <Card label="INVENTORY VALUE" value={fmtRs(inventoryValue)} sub={`${inStock.reduce((s, l) => s + lapUnits(l), 0)} units at cost`} />
         <Card label="POTENTIAL REVENUE" value={fmtRs(potentialRevenue)} sub="at asking prices" />
         <Card label="POTENTIAL PROFIT" value={fmtRs(potentialProfit)} color="var(--success)" sub={pct(potentialProfit, potentialRevenue) + ' margin'} />
         <Card label="AVG DAYS TO SELL" value={avgDaysToSell > 0 ? `${avgDaysToSell}d` : 'N/A'} sub={`${sold.length} sold total`} />

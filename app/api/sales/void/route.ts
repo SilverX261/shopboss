@@ -63,8 +63,20 @@ export async function POST(request: Request) {
     void_approved_by: user.id,
   }).eq('id', sale_id)
 
-  // Return laptop to in_stock
-  await supabase.from('laptops').update({ status: 'in_stock' }).eq('id', sale.laptop_id)
+  // Return laptop to in_stock (bulk items get their unit back)
+  const { data: voidLaptop } = await supabase
+    .from('laptops')
+    .select('quantity, is_bulk')
+    .eq('id', sale.laptop_id)
+    .single()
+  if (voidLaptop?.is_bulk) {
+    await supabase.from('laptops').update({
+      quantity: (voidLaptop.quantity ?? 0) + 1,
+      status: 'in_stock',
+    }).eq('id', sale.laptop_id)
+  } else {
+    await supabase.from('laptops').update({ status: 'in_stock' }).eq('id', sale.laptop_id)
+  }
 
   // Log void activity
   await supabase.from('activity_log').insert({
