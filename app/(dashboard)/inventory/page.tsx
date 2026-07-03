@@ -8,7 +8,7 @@ import { useDashboard } from '@/components/layout/DashboardContext'
 import { canUse } from '@/lib/utils/plan-gates'
 import {
   Search, Plus, Upload, Download, Copy, Check, ShoppingCart, X, Pencil, Package,
-  ShieldAlert, ChevronDown, ChevronRight,
+  ShieldAlert, ChevronDown, ChevronRight, Trash2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Fuse from 'fuse.js'
@@ -395,6 +395,9 @@ export default function InventoryPage() {
   const [historyLaptop, setHistoryLaptop] = useState<LaptopRow | null>(null)
   const [editLaptop, setEditLaptop] = useState<LaptopRow | null>(null)
   const [warrantyOpen, setWarrantyOpen] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false)
+  const [deletingAll, setDeletingAll] = useState(false)
 
   const load = useCallback(async () => {
     if (!shop) return
@@ -443,6 +446,47 @@ export default function InventoryPage() {
   }
 
   const handleExport = () => { window.location.href = '/api/inventory/export' }
+
+  // Delete a single laptop (owner only, in_stock / out_of_stock only)
+  const handleDelete = async (id: string) => {
+    const supabase = createClient()
+    const { error } = await supabase.from('laptops').delete().eq('id', id)
+    if (error) {
+      toast.error('Could not delete — laptops with recorded sales are kept for history.')
+      setDeleteConfirmId(null)
+      return
+    }
+    toast.success('Laptop deleted')
+    setLaptops((prev) => prev.filter((l) => l.id !== id))
+    setDeleteConfirmId(null)
+  }
+
+  // Delete all in_stock / out_of_stock laptops. Laptops referenced by sales
+  // (partially sold bulk stock) are kept — the FK protects sales history.
+  const handleDeleteAll = async () => {
+    if (!shop) return
+    setDeletingAll(true)
+    const supabase = createClient()
+    const { data: refs } = await supabase.from('sales').select('laptop_id').eq('shop_id', shop.id)
+    const referenced = Array.from(new Set((refs ?? []).map((r) => r.laptop_id).filter(Boolean)))
+    let query = supabase
+      .from('laptops')
+      .delete()
+      .eq('shop_id', shop.id)
+      .in('status', ['in_stock', 'out_of_stock'])
+    if (referenced.length) query = query.not('id', 'in', `(${referenced.join(',')})`)
+    const { error } = await query
+    setDeletingAll(false)
+    setDeleteAllOpen(false)
+    if (error) { toast.error('Could not delete inventory. Please try again.'); return }
+    const kept = laptops.filter(
+      (l) => (l.status === 'in_stock' || l.status === 'out_of_stock') && referenced.includes(l.id)
+    ).length
+    toast.success(kept > 0 ? `Inventory cleared (${kept} kept — they have sales history)` : 'Inventory cleared')
+    load()
+  }
+
+  const deletableCount = laptops.filter((l) => l.status === 'in_stock' || l.status === 'out_of_stock').length
 
   // Send an in-stock laptop to the supplier for warranty
   const handleMarkSent = async (l: LaptopRow) => {
@@ -509,6 +553,39 @@ export default function InventoryPage() {
     <>
       {historyLaptop && <HistoryModal laptop={historyLaptop} onClose={() => setHistoryLaptop(null)} />}
       {editLaptop && <EditModal laptop={editLaptop} onClose={() => setEditLaptop(null)} onSave={handleEditSave} />}
+      {deleteAllOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}
+          onClick={() => !deletingAll && setDeleteAllOpen(false)}
+        >
+          <div
+            style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 14, padding: '28px 24px', width: '100%', maxWidth: 420 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p style={{ color: 'var(--text)', fontWeight: 700, fontSize: 17, marginBottom: 10 }}>Delete all inventory?</p>
+            <p style={{ color: 'var(--text-2)', fontSize: 14, lineHeight: 1.65, marginBottom: 22 }}>
+              Delete all {deletableCount} laptop{deletableCount !== 1 ? 's' : ''} in stock? This cannot be undone.
+              Sold and traded-in laptops are kept as sales history.
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={handleDeleteAll}
+                disabled={deletingAll}
+                style={{ flex: 1, background: 'var(--danger)', border: 'none', borderRadius: 8, padding: '11px', color: '#fff', fontWeight: 600, fontSize: 14, cursor: deletingAll ? 'not-allowed' : 'pointer', opacity: deletingAll ? 0.7 : 1 }}
+              >
+                {deletingAll ? 'Deleting…' : 'Yes, delete all'}
+              </button>
+              <button
+                onClick={() => setDeleteAllOpen(false)}
+                disabled={deletingAll}
+                style={{ flex: 1, background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, padding: '11px', color: 'var(--text-2)', fontWeight: 500, fontSize: 14, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ maxWidth: 1180, marginInline: 'auto' }}>
         {/* Header */}
@@ -544,6 +621,14 @@ export default function InventoryPage() {
                 <Upload size={14} /> Excel Import 🔒
               </button>
             )}
+
+            <button
+              onClick={() => deletableCount > 0 && setDeleteAllOpen(true)}
+              disabled={deletableCount === 0}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--danger-bg)', border: '1px solid var(--danger)', borderRadius: 8, padding: '9px 14px', color: 'var(--danger)', fontSize: 13, fontWeight: 600, cursor: deletableCount === 0 ? 'not-allowed' : 'pointer', opacity: deletableCount === 0 ? 0.5 : 1 }}
+            >
+              <Trash2 size={14} /> Delete All
+            </button>
 
             <Link
               href="/inventory/add"
@@ -852,6 +937,33 @@ export default function InventoryPage() {
                             >
                               <Pencil size={11} />
                             </button>
+                          )}
+                          {!isStaff && (l.status === 'in_stock' || l.status === 'out_of_stock') && (
+                            deleteConfirmId === l.id ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+                                <span style={{ color: 'var(--text-2)', fontSize: 11 }}>Delete this laptop? This cannot be undone.</span>
+                                <button
+                                  onClick={() => handleDelete(l.id)}
+                                  style={{ background: 'var(--danger)', border: 'none', borderRadius: 6, padding: '5px 10px', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                                >
+                                  Confirm
+                                </button>
+                                <button
+                                  onClick={() => setDeleteConfirmId(null)}
+                                  style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', color: 'var(--text-2)', fontSize: 11, cursor: 'pointer' }}
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => setDeleteConfirmId(l.id)}
+                                title="Delete laptop"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--danger-bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 8px', color: 'var(--danger)', fontSize: 11, cursor: 'pointer' }}
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            )
                           )}
                         </div>
                       </td>
