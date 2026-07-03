@@ -533,8 +533,10 @@ export default function InventoryPage() {
   // â”€â”€ Summary + valuation figures (in-stock only) â”€â”€
   const stock = useMemo(() => {
     const inStock = laptops.filter((l) => l.status === 'in_stock')
-    const stockValue = inStock.reduce((s, l) => s + (l.purchase_price || 0), 0)
-    const potentialRevenue = inStock.reduce((s, l) => s + (l.asking_price || 0), 0)
+    // Bulk items hold quantity units, so value totals are per-unit price × units
+    const units = (l: LaptopRow) => (l.is_bulk ? Math.max(0, l.quantity ?? 1) : 1)
+    const stockValue = inStock.reduce((s, l) => s + (l.purchase_price || 0) * units(l), 0)
+    const potentialRevenue = inStock.reduce((s, l) => s + (l.asking_price || 0) * units(l), 0)
     const totalDays = inStock.reduce((s, l) => s + daysInStock(l), 0)
     return {
       count: inStock.length,
