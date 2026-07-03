@@ -43,7 +43,7 @@ const FIELD_LABEL: Record<Field, string> = {
 
 export const KNOWN_BRANDS = [
   'Dell', 'HP', 'Lenovo', 'Apple', 'Asus', 'Acer', 'Toshiba', 'Samsung',
-  'MSI', 'Microsoft', 'Huawei',
+  'MSI', 'Microsoft', 'Huawei', 'Sony', 'LG',
 ]
 
 // ─── Column detection ─────────────────────────────────────────────────────────
@@ -98,8 +98,11 @@ function cleanStorage(raw: string, hddContext: boolean): string {
   const num = s.match(/^(\d+(?:\.\d+)?)$/)
   if (num) {
     const n = parseFloat(num[1])
-    // Bare small numbers are terabytes ("1" → 1 TB); larger ones gigabytes
-    return n <= 4 ? `${n} TB ${kind}` : `${n} GB ${kind}`
+    // Bare small numbers are terabytes ("1" → 1 TB); 1000+ are GB-denominated TB;
+    // everything between is gigabytes
+    if (n <= 4) return `${n} TB ${kind}`
+    if (n >= 1000) return `${n / 1000} TB ${kind}`
+    return `${n} GB ${kind}`
   }
   return s
 }
@@ -109,7 +112,13 @@ function cleanProcessor(raw: string): string {
   if (!s) return ''
   // "i7" / "i5 11th gen" / "I3-10110U" → prefix with Intel Core, keep the rest
   const m = s.match(/^i([3579])\b(.*)$/i)
-  if (m) return `Intel Core i${m[1]}${m[2]}`.trim()
+  if (m) {
+    const rest = m[2].trim().replace(/^[-\s]+/, '')
+    // Generation suffix gets the canonical "(12th Gen)" form
+    const gen = rest.match(/^(\d{1,2})\s*(?:th|st|nd|rd)\s*gen(?:eration)?$/i)
+    if (gen) return `Intel Core i${m[1]} (${gen[1]}th Gen)`
+    return `Intel Core i${m[1]}${rest ? ' ' + rest : ''}`
+  }
   return s
 }
 

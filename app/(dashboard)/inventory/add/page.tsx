@@ -28,6 +28,7 @@ interface LaptopForm {
   storage: string
   screen: string
   condition: string
+  quantity: string
   purchase_price: string
   asking_price: string
   purchase_date: string
@@ -43,7 +44,7 @@ interface LaptopForm {
 
 const BLANK: LaptopForm = {
   imei: '', brand: '', model: '', processor: '', ram: '', storage: '', screen: '',
-  condition: 'used', purchase_price: '', asking_price: '', purchase_date: todayISO(),
+  condition: 'used', quantity: '1', purchase_price: '', asking_price: '', purchase_date: todayISO(),
   supplier_name: '', supplier_payment: 'cash', amount_owed: '', due_date: '', notes: '',
   stock_type: 'own', source_shop_name: '', source_shop_price: '',
 }
@@ -276,6 +277,8 @@ function SingleAddForm({ plan }: { plan: string }) {
     }
     const price = parseFloat(form.purchase_price)
     if (isNaN(price) || price < 0) { toast.error('Enter a valid purchase price'); return }
+    const qty = Math.floor(parseFloat(form.quantity))
+    if (isNaN(qty) || qty < 1) { toast.error('Quantity must be at least 1'); return }
     const asking = form.asking_price ? parseFloat(form.asking_price) : 0
     if (form.asking_price && (isNaN(asking) || asking < 0)) { toast.error('Enter a valid asking price'); return }
 
@@ -315,6 +318,8 @@ function SingleAddForm({ plan }: { plan: string }) {
         supplier_payment: form.supplier_payment,
         notes: form.notes.trim() || null,
         status: 'in_stock',
+        quantity: qty,
+        is_bulk: qty > 1,
         stock_type: form.stock_type,
         source_shop_name: form.stock_type === 'market' ? (form.source_shop_name.trim() || null) : null,
         source_shop_price: form.stock_type === 'market' && form.source_shop_price ? (parseFloat(form.source_shop_price) || null) : null,
@@ -379,7 +384,7 @@ function SingleAddForm({ plan }: { plan: string }) {
             <AlertCircle size={12} /> {imeiError}
           </p>
         ) : (
-          <p style={{ color: 'var(--text-3)', fontSize: 11, marginTop: 4 }}>Scan barcode or type manually. Letters and numbers accepted.</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 11, marginTop: 4 }}>Enter if known. For bulk stock, serial numbers are captured at point of sale.</p>
         )}
         {plan === 'standard' && (
           <p style={{ color: 'var(--text-3)', fontSize: 11, marginTop: 4 }}>🔒 Auto-fill from serial number requires Pro or Boss plan</p>
@@ -423,8 +428,8 @@ function SingleAddForm({ plan }: { plan: string }) {
         </div>
       </div>
 
-      {/* Condition / Purchase date */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      {/* Condition / Quantity / Purchase date */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
         <div>
           <label style={labelStyle}>Condition *</label>
           <select value={form.condition} onChange={(e) => set('condition', e.target.value)} style={inputStyle}>
@@ -432,6 +437,15 @@ function SingleAddForm({ plan }: { plan: string }) {
             <option value="used">Used</option>
             <option value="refurbished">Refurbished</option>
           </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Quantity (units in stock)</label>
+          <input
+            type="number" min={1} step={1}
+            value={form.quantity}
+            onChange={(e) => set('quantity', e.target.value)}
+            style={inputStyle}
+          />
         </div>
         <div>
           <label style={labelStyle}>Purchase Date *</label>

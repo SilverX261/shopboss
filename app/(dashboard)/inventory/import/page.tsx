@@ -1,24 +1,15 @@
 'use client'
 
-import { useRef, useState, useCallback, useMemo, useEffect } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useShop } from '@/hooks/useShop'
 import { canUse } from '@/lib/utils/plan-gates'
-import { parseSmartSheet, validateSerial, type SmartRow, type ImportNote } from '@/lib/utils/smart-import'
+import { parseSmartSheet, type SmartRow, type ImportNote } from '@/lib/utils/smart-import'
 import { Upload, ArrowLeft, AlertCircle, Check, Lock, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import * as XLSX from 'xlsx'
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface ExpandedUnit extends SmartRow {
-  baseIndex: number
-  unitIndex: number // 0-based position within its base row's quantity
-}
-
-type QtyMode = 'all' | 'serials'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,38 +21,16 @@ function ImportContent() {
   const router = useRouter()
   const { shop } = useShop()
   const [dragging, setDragging] = useState(false)
-  const [baseRows, setBaseRows] = useState<SmartRow[]>([])
+  const [rows, setRows] = useState<SmartRow[]>([])
   const [notes, setNotes] = useState<ImportNote[]>([])
   const [fileName, setFileName] = useState('')
   const [importing, setImporting] = useState(false)
-  const [qtyMode, setQtyMode] = useState<QtyMode>('all')
   const [panelOpen, setPanelOpen] = useState(false)
-  const [serials, setSerials] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const expanded: ExpandedUnit[] = useMemo(
-    () =>
-      baseRows.flatMap((r, baseIndex) => {
-        const qty = r.error ? 1 : r.qty
-        return Array.from({ length: qty }, (_, unitIndex) => ({
-          ...r,
-          // Only the first unit keeps a serial from the file — duplicates are per-unit
-          serial: unitIndex === 0 ? r.serial : null,
-          baseIndex,
-          unitIndex,
-        }))
-      }),
-    [baseRows]
-  )
-
-  // Reset the per-unit serial inputs whenever the parsed data changes
-  useEffect(() => {
-    setSerials(expanded.map((u) => u.serial ?? ''))
-  }, [expanded])
-
-  const valid = expanded.filter((u) => !u.error)
-  const invalid = expanded.filter((u) => !!u.error)
-  const hasMultiUnits = baseRows.some((r) => !r.error && r.qty > 1)
+  const valid = rows.filter((r) => !r.error)
+  const invalid = rows.filter((r) => !!r.error)
+  const totalUnits = valid.reduce((s, r) => s + r.qty, 0)
 
   const handleFile = (file: File) => {
     if (!file.name.match(/\.(xlsx|xls|csv)$/i)) {
@@ -74,9 +43,8 @@ function ImportContent() {
       try {
         const wb = XLSX.read(e.target?.result, { type: 'array' })
         const { rows: parsed, notes: parseNotes } = parseSmartSheet(wb)
-        setBaseRows(parsed)
+        setRows(parsed)
         setNotes(parseNotes)
-        setQtyMode('all')
         setPanelOpen(false)
         if (!parsed.length) toast.error('No data rows found in the file')
       } catch {
@@ -94,52 +62,29 @@ function ImportContent() {
   }, [])
 
   const clearAll = () => {
-    setBaseRows([])
+    setRows([])
     setNotes([])
     setFileName('')
-    setSerials([])
   }
 
   const handleImport = async () => {
     if (!shop || !valid.length) return
-
-    // In "enter serials" mode, validate what the user typed before touching the DB
-    let unitSerials: (string | null)[] = valid.map((u) => u.serial)
-    if (qtyMode === 'serials') {
-      const typed: (string | null)[] = []
-      const seen = new Set<string>()
-      for (const u of valid) {
-        const idx = expanded.indexOf(u)
-        const { serial, error } = validateSerial(serials[idx] ?? '')
-        if (error) {
-          toast.error(`Row ${idx + 1}: ${error}`)
-          return
-        }
-        if (serial) {
-          if (seen.has(serial)) {
-            toast.error(`Duplicate serial "${serial}" — each unit needs a unique serial`)
-            return
-          }
-          seen.add(serial)
-        }
-        typed.push(serial)
-      }
-      unitSerials = typed
-    }
-
     setImporting(true)
     const supabase = createClient()
-    const inserts = valid.map((u, i) => ({
+    // One row per laptop model — QTY > 1 becomes bulk stock with a unit count
+    const inserts = valid.map((r) => ({
       shop_id: shop.id,
-      imei: unitSerials[i] ?? undefined,
-      brand: u.brand,
-      model: u.model,
-      specs: { processor: u.processor, ram: u.ram, storage: u.storage },
+      imei: r.serial ?? undefined,
+      brand: r.brand,
+      model: r.model,
+      specs: { processor: r.processor, ram: r.ram, storage: r.storage },
       condition: 'used',
-      purchase_price: u.purchase_price,
-      asking_price: u.asking_price,
+      purchase_price: r.purchase_price,
+      asking_price: r.asking_price,
       purchase_date: todayISO(),
       status: 'in_stock',
+      quantity: r.qty,
+      is_bulk: r.qty > 1,
     }))
     // insert in chunks of 50 to avoid payload limits
     const CHUNK = 50
@@ -152,26 +97,24 @@ function ImportContent() {
     if (errors) {
       toast.error('Some rows could not be saved. They may have duplicate serial numbers.')
     } else {
-      toast.success(`${valid.length} laptop${valid.length !== 1 ? 's' : ''} imported!`)
+      toast.success(`${valid.length} laptop${valid.length !== 1 ? 's' : ''} (${totalUnits} unit${totalUnits !== 1 ? 's' : ''}) imported!`)
       router.push('/inventory')
     }
   }
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Serial Number (optional)', 'Brand', 'Model', 'RAM', 'Storage', 'Processor', 'Purchase Price', 'Asking Price'],
-      ['354546112233445', 'Dell', 'Latitude 5420', '8 GB', '256 GB SSD', 'Intel Core i5 (11th Gen)', 85000, 92000],
-      ['', 'HP', 'EliteBook 840', '16 GB', '512 GB SSD', 'Intel Core i7 (11th Gen)', 110000, 125000],
+      ['Serial Number (optional)', 'Brand', 'Model', 'RAM', 'Storage', 'Processor', 'Purchase Price', 'Asking Price', 'QTY'],
+      ['354546112233445', 'Dell', 'Latitude 5420', '8 GB', '256 GB SSD', 'Intel Core i5 (11th Gen)', 85000, 92000, 1],
+      ['', 'HP', 'EliteBook 840', '16 GB', '512 GB SSD', 'Intel Core i7 (11th Gen)', 110000, 125000, 4],
       [],
-      ['Note: any format is accepted — ShopBoss auto-detects columns like Item, CPU, Ram, SSD, Rate and QTY, and splits brand/model automatically.'],
+      ['Note: any format is accepted — ShopBoss auto-detects columns like Item, CPU, Ram, SSD, Rate and QTY, and splits brand/model automatically. QTY > 1 imports as bulk stock.'],
     ])
-    ws['!cols'] = [{ wch: 18 }, { wch: 12 }, { wch: 20 }, { wch: 8 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 14 }]
+    ws['!cols'] = [{ wch: 18 }, { wch: 12 }, { wch: 20 }, { wch: 8 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 14 }, { wch: 6 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Laptops')
     XLSX.writeFile(wb, 'shopboss-import-template.xlsx')
   }
-
-  const previewRows = qtyMode === 'serials' ? expanded : expanded.slice(0, 5)
 
   return (
     <div style={{ maxWidth: 840, marginInline: 'auto' }}>
@@ -196,7 +139,7 @@ function ImportContent() {
       </div>
 
       {/* Drop zone */}
-      {!baseRows.length && (
+      {!rows.length && (
         <div
           onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
           onDragLeave={() => setDragging(false)}
@@ -225,13 +168,13 @@ function ImportContent() {
       )}
 
       {/* Preview */}
-      {baseRows.length > 0 && (
+      {rows.length > 0 && (
         <div>
           {/* Summary bar */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
               <span style={{ color: 'var(--success)', fontSize: 13 }}>
-                <Check size={13} style={{ verticalAlign: 'middle' }} /> {valid.length} ready to import
+                <Check size={13} style={{ verticalAlign: 'middle' }} /> {valid.length} ready to import ({totalUnits} unit{totalUnits !== 1 ? 's' : ''})
               </span>
               {invalid.length > 0 && (
                 <span style={{ color: 'var(--danger)', fontSize: 13 }}>
@@ -248,99 +191,55 @@ function ImportContent() {
             </button>
           </div>
 
-          {/* QTY mode toggle — only when some rows expand into multiple units */}
-          {hasMultiUnits && (
-            <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px', marginBottom: 16 }}>
-              <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600, marginBottom: 10 }}>
-                For laptops with multiple units:
-              </p>
-              <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
-                {([
-                  { value: 'all', label: 'Import all at once', hint: 'identical rows, no serial numbers' },
-                  { value: 'serials', label: 'Enter serials individually', hint: 'type or scan a serial for each unit' },
-                ] as { value: QtyMode; label: string; hint: string }[]).map((opt) => (
-                  <label key={opt.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="qtyMode"
-                      value={opt.value}
-                      checked={qtyMode === opt.value}
-                      onChange={() => setQtyMode(opt.value)}
-                      style={{ marginTop: 2, accentColor: 'var(--accent)' }}
-                    />
-                    <span>
-                      <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 500, display: 'block' }}>{opt.label}</span>
-                      <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{opt.hint}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Preview table */}
           <p style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 8 }}>
-            {qtyMode === 'serials'
-              ? `Preview — all ${expanded.length} unit${expanded.length !== 1 ? 's' : ''} (enter serial numbers below)`
-              : `Preview — showing first ${Math.min(5, expanded.length)} of ${expanded.length} unit${expanded.length !== 1 ? 's' : ''}`}
+            Preview — {rows.length} row{rows.length !== 1 ? 's' : ''}. Rows with more than 1 unit import as bulk stock; serial numbers are captured at point of sale.
           </p>
-          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'auto', marginBottom: 16, maxHeight: qtyMode === 'serials' ? 480 : undefined }}>
+          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'auto', marginBottom: 16 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  {['Serial No.', 'Brand', 'Model', 'RAM', 'Storage', 'Processor', 'Asking', 'Status'].map((h) => (
+                  {['Serial No.', 'Brand', 'Model', 'Units', 'RAM', 'Storage', 'Processor', 'Asking', 'Status'].map((h) => (
                     <th key={h} style={{ padding: '10px 14px', textAlign: 'left', color: 'var(--text-3)', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {previewRows.map((u) => {
-                  const idx = expanded.indexOf(u)
-                  return (
-                    <tr key={idx} style={{ borderBottom: '1px solid var(--border)', opacity: u.error ? 0.55 : 1 }}>
-                      <td style={{ padding: '9px 14px', fontFamily: 'monospace', fontSize: 12, color: u.serial ? 'var(--text-2)' : 'var(--text-3)' }}>
-                        {qtyMode === 'serials' && !u.error ? (
-                          <input
-                            value={serials[idx] ?? ''}
-                            onChange={(e) => {
-                              const next = [...serials]
-                              next[idx] = e.target.value
-                              setSerials(next)
-                            }}
-                            placeholder="Type or scan serial"
-                            style={{
-                              background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 6,
-                              padding: '5px 8px', color: 'var(--text)', fontSize: 12, fontFamily: 'monospace',
-                              width: 160, outline: 'none',
-                            }}
-                          />
-                        ) : (
-                          u.serial ?? 'No serial'
-                        )}
-                      </td>
-                      <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text)' }}>{u.brand || '—'}</td>
-                      <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text)' }}>{u.model || '—'}</td>
-                      <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{u.ram || '—'}</td>
-                      <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{u.storage || '—'}</td>
-                      <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{u.processor || '—'}</td>
-                      <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
-                        {u.asking_price > 0 ? `Rs ${u.asking_price.toLocaleString('en-PK')}` : '—'}
-                      </td>
-                      <td style={{ padding: '9px 14px' }}>
-                        {u.error ? (
-                          <span style={{ color: 'var(--danger)', fontSize: 11, whiteSpace: 'nowrap' }}>
-                            <AlertCircle size={11} style={{ verticalAlign: 'middle' }} /> {u.error}
-                          </span>
-                        ) : (
-                          <span style={{ color: 'var(--success)', fontSize: 11, whiteSpace: 'nowrap' }}>
-                            <Check size={11} style={{ verticalAlign: 'middle' }} /> OK
-                            {u.qty > 1 && ` (${u.unitIndex + 1}/${u.qty})`}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
+                {rows.map((r, idx) => (
+                  <tr key={idx} style={{ borderBottom: '1px solid var(--border)', opacity: r.error ? 0.55 : 1 }}>
+                    <td style={{ padding: '9px 14px', fontFamily: 'monospace', fontSize: 12, color: r.serial ? 'var(--text-2)' : 'var(--text-3)' }}>
+                      {r.serial ?? 'No serial'}
+                    </td>
+                    <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text)' }}>{r.brand || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text)' }}>{r.model || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>
+                      {r.qty > 1 ? (
+                        <span style={{ background: 'var(--accent-bg)', border: '1px solid var(--accent)', color: 'var(--accent-2)', borderRadius: 6, padding: '2px 8px', fontSize: 12, fontWeight: 700 }}>
+                          x{r.qty}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-2)' }}>1</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{r.ram || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{r.storage || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{r.processor || '—'}</td>
+                    <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                      {r.asking_price > 0 ? `Rs ${r.asking_price.toLocaleString('en-PK')}` : '—'}
+                    </td>
+                    <td style={{ padding: '9px 14px' }}>
+                      {r.error ? (
+                        <span style={{ color: 'var(--danger)', fontSize: 11, whiteSpace: 'nowrap' }}>
+                          <AlertCircle size={11} style={{ verticalAlign: 'middle' }} /> {r.error}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--success)', fontSize: 11, whiteSpace: 'nowrap' }}>
+                          <Check size={11} style={{ verticalAlign: 'middle' }} /> OK{r.qty > 1 ? ' (bulk)' : ''}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -386,7 +285,7 @@ function ImportContent() {
               opacity: importing || !valid.length ? 0.7 : 1,
             }}
           >
-            {importing ? 'Importing…' : `Import ${valid.length} Laptop${valid.length !== 1 ? 's' : ''}`}
+            {importing ? 'Importing…' : `Import ${valid.length} Laptop${valid.length !== 1 ? 's' : ''} (${totalUnits} unit${totalUnits !== 1 ? 's' : ''})`}
           </button>
         </div>
       )}

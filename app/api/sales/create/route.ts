@@ -19,6 +19,7 @@ export async function POST(request: Request) {
     customer_name,
     due_date,
     trade_in,
+    sale_serial_number,
   } = body
 
   if (!laptop_id || !sale_price || !payment_type) {
@@ -30,14 +31,22 @@ export async function POST(request: Request) {
   // Fetch laptop to confirm it's in stock and belongs to this shop
   const { data: laptop } = await supabase
     .from('laptops')
-    .select('id, brand, model, purchase_price, status, imei, shop_id, specs')
+    .select('id, brand, model, purchase_price, status, imei, shop_id, specs, quantity, is_bulk')
     .eq('id', laptop_id)
     .single()
 
   if (!laptop || laptop.shop_id !== session.shop_id) {
     return NextResponse.json({ error: 'Laptop not found' }, { status: 404 })
   }
-  if (laptop.status !== 'in_stock') {
+  const isBulk = !!laptop.is_bulk
+  if (isBulk) {
+    if (laptop.status === 'out_of_stock' || (laptop.quantity ?? 0) <= 0) {
+      return NextResponse.json({ error: 'Out of stock — no units left to sell' }, { status: 409 })
+    }
+    if (laptop.status !== 'in_stock') {
+      return NextResponse.json({ error: 'Laptop not available for sale' }, { status: 409 })
+    }
+  } else if (laptop.status !== 'in_stock') {
     return NextResponse.json({ error: 'Laptop already sold' }, { status: 409 })
   }
 
@@ -73,6 +82,7 @@ export async function POST(request: Request) {
       customer_name: customer_name || null,
       profit,
       sold_at: new Date().toISOString(),
+      ...(typeof sale_serial_number === 'string' && sale_serial_number.trim() && { sale_serial_number: sale_serial_number.trim() }),
     })
     .select('id')
     .single()
@@ -82,8 +92,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: saleErr?.message ?? 'Failed to record sale' }, { status: 500 })
   }
 
-  // Mark laptop as sold
-  await supabase.from('laptops').update({ status: 'sold' }).eq('id', laptop_id)
+  if (isBulk) {
+    // Bulk stock: decrement units instead of marking sold; 0 left → out_of_stock
+    const newQty = Math.max(0, (laptop.quantity ?? 1) - 1)
+    await supabase
+      .from('laptops')
+      .update({ quantity: newQty, ...(newQty === 0 && { status: 'out_of_stock' }) })
+      .eq('id', laptop_id)
+  } else {
+    // Mark laptop as sold
+    await supabase.from('laptops').update({ status: 'sold' }).eq('id', laptop_id)
+  }
 
   // If udhaar payment → create udhaar record
   if (payment_type === 'udhaar' && customer_name) {

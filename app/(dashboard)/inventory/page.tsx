@@ -126,7 +126,10 @@ function StockBadge({ laptop }: { laptop: LaptopRow }) {
 // â”€â”€â”€ Status badge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function StatusBadge({ laptop }: { laptop: LaptopRow }) {
-  const cfg = laptop.status === 'in_stock'
+  const outOfStock = laptop.status === 'out_of_stock' || (laptop.is_bulk && (laptop.quantity ?? 0) <= 0)
+  const cfg = outOfStock
+    ? { bg: 'var(--danger-bg)', border: 'var(--border)', color: 'var(--danger)', label: 'Out of Stock' }
+    : laptop.status === 'in_stock'
     ? { bg: 'var(--success-bg)', border: 'var(--success-border)', color: 'var(--success)', label: 'In Stock' }
     : laptop.status === 'sold'
     ? { bg: 'var(--bg-3)', border: 'var(--border)', color: 'var(--text-3)', label: 'Sold' }
@@ -678,7 +681,14 @@ export default function InventoryPage() {
                   <div key={l.id} style={{ background: 'var(--bg-card, var(--bg-2))', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
                       <div style={{ minWidth: 0, flex: 1 }}>
-                        <p style={{ color: 'var(--copper, var(--accent))', fontWeight: 700, fontSize: 16, lineHeight: 1.2 }}>{l.brand} {l.model}</p>
+                        <p style={{ color: 'var(--copper, var(--accent))', fontWeight: 700, fontSize: 16, lineHeight: 1.2 }}>
+                          {l.brand} {l.model}
+                          {l.is_bulk && (l.quantity ?? 0) > 0 && (
+                            <span style={{ marginLeft: 6, background: 'var(--accent-bg)', border: '1px solid var(--accent)', color: 'var(--accent-2)', borderRadius: 5, padding: '1px 6px', fontSize: 11, fontWeight: 700, verticalAlign: 'middle' }}>
+                              x{l.quantity}
+                            </span>
+                          )}
+                        </p>
                         <p style={{ color: 'var(--text-3)', fontSize: 11, fontFamily: 'monospace', marginTop: 2 }}>{l.imei ?? 'No serial'}</p>
                       </div>
                       <StatusBadge laptop={l} />
@@ -743,8 +753,8 @@ export default function InventoryPage() {
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
                   {(isStaff
-                    ? ['Serial No.', 'Brand', 'Model', 'Specs', 'Bought', 'Days', 'Status', 'Type']
-                    : ['Serial No.', 'Brand', 'Model', 'Specs', 'Purchase', 'Bought', 'Days', 'Asking', 'Status', 'Type', 'Margin', '']
+                    ? ['Serial No.', 'Brand', 'Model', 'Units', 'Specs', 'Bought', 'Days', 'Status', 'Type']
+                    : ['Serial No.', 'Brand', 'Model', 'Units', 'Specs', 'Purchase', 'Bought', 'Days', 'Asking', 'Status', 'Type', 'Margin', '']
                   ).map((h) => (
                     <th key={h} style={{ padding: '11px 14px', textAlign: 'left', color: 'var(--text-3)', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
                       {h}
@@ -764,7 +774,25 @@ export default function InventoryPage() {
                     >
                       <td style={{ padding: '11px 14px' }}><ImeiCell imei={l.imei} /></td>
                       <td style={{ padding: '11px 14px', color: 'var(--text)', fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>{l.brand}</td>
-                      <td style={{ padding: '11px 14px', color: 'var(--text-2)', fontSize: 13, whiteSpace: 'nowrap' }}>{l.model}</td>
+                      <td style={{ padding: '11px 14px', color: 'var(--text-2)', fontSize: 13, whiteSpace: 'nowrap' }}>
+                        {l.model}
+                        {l.is_bulk && (l.quantity ?? 0) > 0 && (
+                          <span style={{ marginLeft: 6, background: 'var(--accent-bg)', border: '1px solid var(--accent)', color: 'var(--accent-2)', borderRadius: 5, padding: '1px 6px', fontSize: 11, fontWeight: 700 }}>
+                            x{l.quantity}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '11px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>
+                        {l.is_bulk ? (
+                          (l.quantity ?? 0) > 0 ? (
+                            <span style={{ color: 'var(--text)', fontWeight: 600 }}>{l.quantity}</span>
+                          ) : (
+                            <span style={{ color: 'var(--danger)', fontWeight: 600 }}>0</span>
+                          )
+                        ) : (
+                          <span style={{ color: 'var(--text-3)' }}>{l.status === 'sold' || l.status === 'traded_in' ? '—' : '1'}</span>
+                        )}
+                      </td>
                       <td style={{ padding: '11px 14px', color: 'var(--text-3)', fontSize: 12, maxWidth: 200 }}>
                         <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                           {specsLine(l.specs ?? {}) || '—'}

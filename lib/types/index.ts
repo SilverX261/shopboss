@@ -27,7 +27,7 @@ export interface SpecAdjustment {
 export type PlanType = 'standard' | 'pro' | 'boss'
 export type SubscriptionStatus = 'trial' | 'active' | 'payment_pending' | 'expired' | 'cancelled'
 export type PaymentMethod = 'cash' | 'udhaar' | 'bank_transfer'
-export type LaptopStatus = 'in_stock' | 'sold' | 'traded_in'
+export type LaptopStatus = 'in_stock' | 'sold' | 'traded_in' | 'out_of_stock'
 export type UdhaarStatus = 'pending' | 'partial' | 'paid' | 'overdue'
 export type UdhaarMode = 'item_based' | 'value_based'
 export type CountStatus = 'pending' | 'submitted' | 'verified' | 'flagged'
@@ -110,6 +110,8 @@ export interface Laptop {
   warranty_sent_at?: string | null
   warranty_resolved_at?: string | null
   warranty_resolution?: WarrantyResolution | null
+  quantity?: number
+  is_bulk?: boolean
 }
 
 export type WarrantyStatus = 'none' | 'sent' | 'resolved'
@@ -211,6 +213,7 @@ export interface Sale {
   post_snapshot: boolean
   notes: string | null
   bank_reference: string | null
+  sale_serial_number?: string | null
 }
 
 export interface AccessoryCategory {

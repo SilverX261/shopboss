@@ -32,6 +32,9 @@ interface StockLaptop {
   stock_type?: string | null
   source_shop_name?: string | null
   source_shop_price?: number | null
+  quantity?: number
+  is_bulk?: boolean
+  status?: string
 }
 
 type PaymentType = 'cash' | 'bank_transfer' | 'udhaar'
@@ -46,6 +49,7 @@ interface SaleDetails {
   bank_reference: string
   notes: string
   cnic: File | null
+  sale_serial: string
 }
 
 interface ExchangeInfo {
@@ -171,14 +175,18 @@ function StepFind({ laptops, onSelect }: { laptops: StockLaptop[]; onSelect: (l:
           {results.map((l) => {
             const days = daysInStock(l)
             const isMarket = l.stock_type === 'market'
+            const soldOut = !!l.is_bulk && ((l.quantity ?? 0) <= 0 || l.status === 'out_of_stock')
             return (
               <button
                 key={l.id}
-                onClick={() => onSelect(l)}
+                onClick={() => { if (!soldOut) onSelect(l) }}
+                disabled={soldOut}
+                title={soldOut ? 'Out of stock — no units left to sell' : undefined}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
                   background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10,
-                  padding: '14px 16px', cursor: 'pointer', textAlign: 'left', width: '100%',
+                  padding: '14px 16px', cursor: soldOut ? 'not-allowed' : 'pointer', textAlign: 'left', width: '100%',
+                  opacity: soldOut ? 0.45 : 1,
                 }}
               >
                 <div style={{ minWidth: 0 }}>
@@ -187,6 +195,13 @@ function StepFind({ laptops, onSelect }: { laptops: StockLaptop[]; onSelect: (l:
                     {isMarket && (
                       <span style={{ background: 'var(--warning)', color: 'var(--bg)', borderRadius: 5, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>MARKET</span>
                     )}
+                    {l.is_bulk && (soldOut ? (
+                      <span style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger)', color: 'var(--danger)', borderRadius: 5, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>OUT OF STOCK</span>
+                    ) : (
+                      <span style={{ background: 'var(--accent-bg)', border: '1px solid var(--accent)', color: 'var(--accent-2)', borderRadius: 5, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>
+                        x{l.quantity} in stock
+                      </span>
+                    ))}
                   </div>
                   <p style={{ color: 'var(--text-3)', fontSize: 12 }}>{specsLine(l.specs ?? {}) || '—'}</p>
                   <p style={{ color: 'var(--text-3)', fontSize: 11, fontFamily: 'monospace', marginTop: 2 }}>S/N {l.imei ? `…${l.imei.slice(-6)}` : 'No serial'}</p>
@@ -379,6 +394,22 @@ function StepDetails({
           </div>
         )}
       </div>
+
+      {/* Per-unit serial capture for bulk stock */}
+      {laptop.is_bulk && (
+        <div>
+          <label style={labelStyle}>Serial Number (recommended)</label>
+          <input
+            value={details.sale_serial}
+            onChange={(e) => set('sale_serial', e.target.value)}
+            placeholder="Scan or type the serial number of this specific unit"
+            style={{ ...inputStyle, border: '1px solid var(--warning)' }}
+          />
+          <p style={{ color: 'var(--text-3)', fontSize: 11, marginTop: 4 }}>
+            Strongly recommended — helps with warranty tracking. Skip only if not available.
+          </p>
+        </div>
+      )}
 
       {/* ─── Bundled Accessories ─────────────────────────────────────────────── */}
       <div style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
@@ -780,7 +811,9 @@ function StepConfirm({
 
   const rows: [string, string, string?][] = [
     ['Laptop', `${laptop.brand} ${laptop.model}`],
-    ['Serial No.', laptop.imei ? `…${laptop.imei.slice(-6)}` : 'No serial'],
+    ['Serial No.', laptop.is_bulk
+      ? (details.sale_serial.trim() || 'Not entered')
+      : (laptop.imei ? `…${laptop.imei.slice(-6)}` : 'No serial')],
     ['Purchase price', fmtRs(laptop.purchase_price)],
   ]
 
@@ -977,7 +1010,7 @@ function SuccessScreen({
 
 const BLANK_DETAILS: SaleDetails = {
   sale_price: '', payment_type: 'cash', customer_name: '', customer_phone: '',
-  due_date: '', bank_reference: '', notes: '', cnic: null,
+  due_date: '', bank_reference: '', notes: '', cnic: null, sale_serial: '',
 }
 
 const BLANK_EXCHANGE: ExchangeInfo = {
@@ -1012,9 +1045,9 @@ function NewSaleInner() {
     const [{ data: laptopData }, { data: accData }] = await Promise.all([
       supabase
         .from('laptops')
-        .select('id, brand, model, imei, condition, specs, purchase_price, asking_price, purchase_date, added_at, stock_type, source_shop_name, source_shop_price')
+        .select('id, brand, model, imei, condition, specs, purchase_price, asking_price, purchase_date, added_at, stock_type, source_shop_name, source_shop_price, quantity, is_bulk, status')
         .eq('shop_id', shop.id)
-        .eq('status', 'in_stock')
+        .in('status', ['in_stock', 'out_of_stock'])
         .order('added_at', { ascending: false }),
       supabase
         .from('accessory_categories')
@@ -1065,6 +1098,7 @@ function NewSaleInner() {
     fd.append('due_date', details.due_date)
     fd.append('bank_reference', details.bank_reference)
     fd.append('notes', details.notes)
+    if (selected.is_bulk && details.sale_serial.trim()) fd.append('sale_serial_number', details.sale_serial.trim())
     if (details.cnic) fd.append('cnic_photo', details.cnic)
 
     // Floor price tracking

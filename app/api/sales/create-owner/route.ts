@@ -25,6 +25,7 @@ export async function POST(request: Request) {
   const exchangeValue = isExchange ? parseFloat(form.get('exchange_value') as string) || 0 : 0
   const exchangeModel = isExchange ? ((form.get('exchange_laptop_model') as string) || '').trim() || null : null
   const exchangeCondition = isExchange ? ((form.get('exchange_laptop_condition') as string) || '').trim() || null : null
+  const sale_serial_number = ((form.get('sale_serial_number') as string) || '').trim() || null
   const below_floor = form.get('below_floor') === 'true'
   const floor_price_at_sale_raw = form.get('floor_price_at_sale') as string | null
   const floor_price_at_sale = floor_price_at_sale_raw ? parseFloat(floor_price_at_sale_raw) || null : null
@@ -61,13 +62,21 @@ export async function POST(request: Request) {
   // Validate laptop is in stock and belongs to this shop
   const { data: laptop } = await supabase
     .from('laptops')
-    .select('id, brand, model, imei, specs, purchase_price, status, shop_id')
+    .select('id, brand, model, imei, specs, purchase_price, status, shop_id, quantity, is_bulk')
     .eq('id', laptop_id)
     .single()
   if (!laptop || laptop.shop_id !== shop.id) {
     return NextResponse.json({ error: 'Laptop not found' }, { status: 404 })
   }
-  if (laptop.status !== 'in_stock') {
+  const isBulk = !!laptop.is_bulk
+  if (isBulk) {
+    if (laptop.status === 'out_of_stock' || (laptop.quantity ?? 0) <= 0) {
+      return NextResponse.json({ error: 'Out of stock — no units left to sell' }, { status: 409 })
+    }
+    if (laptop.status !== 'in_stock') {
+      return NextResponse.json({ error: 'Laptop not available for sale' }, { status: 409 })
+    }
+  } else if (laptop.status !== 'in_stock') {
     return NextResponse.json({ error: 'Laptop already sold' }, { status: 409 })
   }
 
@@ -94,6 +103,7 @@ export async function POST(request: Request) {
     sold_at: soldAt,
     bank_reference: bank_reference || null,
     notes: notes || null,
+    ...(sale_serial_number && { sale_serial_number }),
     ...(isExchange && {
       is_exchange: true,
       exchange_value: exchangeValue,
@@ -215,16 +225,28 @@ export async function POST(request: Request) {
     }
   }
 
-  // Mark laptop sold + snapshot the sale onto the laptop row
-  await supabase
-    .from('laptops')
-    .update({
-      status: 'sold',
-      sale_price,
-      sold_at: soldAt,
-      customer_name: customer_name || null,
-    })
-    .eq('id', laptop_id)
+  if (isBulk) {
+    // Bulk stock: decrement units instead of marking sold; 0 left → out_of_stock
+    const newQty = Math.max(0, (laptop.quantity ?? 1) - 1)
+    await supabase
+      .from('laptops')
+      .update({
+        quantity: newQty,
+        ...(newQty === 0 && { status: 'out_of_stock' }),
+      })
+      .eq('id', laptop_id)
+  } else {
+    // Mark laptop sold + snapshot the sale onto the laptop row
+    await supabase
+      .from('laptops')
+      .update({
+        status: 'sold',
+        sale_price,
+        sold_at: soldAt,
+        customer_name: customer_name || null,
+      })
+      .eq('id', laptop_id)
+  }
 
   // Udhaar -> create udhaar record
   if (payment_type === 'udhaar') {
