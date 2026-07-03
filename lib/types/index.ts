@@ -1,4 +1,30 @@
-﻿export type PlanType = 'standard' | 'pro' | 'boss'
+﻿export type PricingCondition = 'new' | 'used' | 'refurbished' | 'open_box'
+
+export interface ModelPricing {
+  id: string
+  shop_id: string
+  model: string
+  condition: PricingCondition
+  list_price: number
+  floor_price: number
+  processor?: string | null
+  ram?: string | null
+  storage?: string | null
+  screen?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SpecAdjustment {
+  id: string
+  shop_id: string
+  spec_type: 'ram' | 'storage'
+  label: string
+  price_delta: number
+  created_at: string
+}
+
+export type PlanType = 'standard' | 'pro' | 'boss'
 export type SubscriptionStatus = 'trial' | 'active' | 'payment_pending' | 'expired' | 'cancelled'
 export type PaymentMethod = 'cash' | 'udhaar' | 'bank_transfer'
 export type LaptopStatus = 'in_stock' | 'sold' | 'traded_in'
@@ -57,7 +83,7 @@ export interface Worker {
 export interface Laptop {
   id: string
   shop_id: string
-  imei: string
+  imei: string | null
   brand: string
   model: string
   specs: Record<string, unknown>
@@ -79,6 +105,42 @@ export interface Laptop {
   stock_type?: 'own' | 'market' | null
   source_shop_name?: string | null
   source_shop_price?: number | null
+  supplier_id?: string | null
+  warranty_status?: WarrantyStatus
+  warranty_sent_at?: string | null
+  warranty_resolved_at?: string | null
+  warranty_resolution?: WarrantyResolution | null
+}
+
+export type WarrantyStatus = 'none' | 'sent' | 'resolved'
+export type WarrantyResolution = 'replacement' | 'refund' | 'credit'
+export type SupplierTransactionType =
+  | 'advance_sent'
+  | 'advance_used'
+  | 'warranty_credit'
+  | 'refund_received'
+  | 'manual_adjustment'
+
+export interface Supplier {
+  id: string
+  shop_id: string
+  name: string
+  phone: string | null
+  city: string | null
+  advance_balance: number
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SupplierTransaction {
+  id: string
+  shop_id: string
+  supplier_id: string
+  type: SupplierTransactionType
+  amount: number
+  note: string | null
+  created_at: string
 }
 
 export interface SupplierCredit {

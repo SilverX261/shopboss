@@ -32,7 +32,7 @@ function parseSheet(wb: XLSX.WorkBook): PreviewRow[] {
   const ws = wb.Sheets[wb.SheetNames[0]]
   const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
   return json.flatMap((row) => {
-    const rawSerial = String(row['Serial Number'] ?? row['IMEI'] ?? row['imei'] ?? '').trim()
+    const rawSerial = String(row['Serial Number'] ?? row['IMEI'] ?? row['imei'] ?? '')
     // Skip placeholder / sample rows
     const lc = rawSerial.toLowerCase()
     if (
@@ -42,6 +42,7 @@ function parseSheet(wb: XLSX.WorkBook): PreviewRow[] {
       /^0+$/.test(rawSerial.replace(/\D/g, ''))
     ) return []
 
+    const imei = rawSerial.replace(/\D/g, '')
     const brand = String(row['Brand'] ?? row['brand'] ?? '')
     const model = String(row['Model'] ?? row['model'] ?? '')
     const processor = String(row['Processor'] ?? row['processor'] ?? '')
@@ -51,25 +52,11 @@ function parseSheet(wb: XLSX.WorkBook): PreviewRow[] {
     const askingRaw = String(row['Asking Price'] ?? row['asking_price'] ?? '').trim()
     const asking = askingRaw ? parseFloat(askingRaw) : 0
 
-    // Serial: blank → null (valid). Non-blank but bad format → error.
-    const serialDigits = rawSerial.replace(/\D/g, '')
-    let imei: string | null = null
     let error: string | undefined
-    if (rawSerial === '') {
-      imei = null
-    } else if (/^\d{15}$/.test(serialDigits) && serialDigits === rawSerial) {
-      imei = serialDigits
-    } else if (/^[a-zA-Z0-9]{5,30}$/.test(rawSerial)) {
-      imei = rawSerial.toUpperCase()
-    } else {
-      error = 'Invalid serial number format'
-    }
-
-    if (!error) {
-      if (!brand) error = 'Missing brand'
-      else if (!model) error = 'Missing model'
-      else if (isNaN(price) || price <= 0) error = 'Invalid price'
-    }
+    if (!/^\d{15}$/.test(imei)) error = 'Invalid serial number'
+    else if (!brand) error = 'Missing brand'
+    else if (!model) error = 'Missing model'
+    else if (isNaN(price) || price <= 0) error = 'Invalid price'
 
     return {
       imei, brand, model, processor, ram, storage,
@@ -127,7 +114,7 @@ function ImportContent() {
     const supabase = createClient()
     const inserts = valid.map((r) => ({
       shop_id: shop.id,
-      imei: r.imei ?? undefined,
+      imei: r.imei,
       brand: r.brand,
       model: r.model,
       specs: { processor: r.processor, ram: r.ram, storage: r.storage },
@@ -155,9 +142,7 @@ function ImportContent() {
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Serial Number (optional)', 'Brand', 'Model', 'RAM', 'Storage', 'Processor', 'Purchase Price', 'Asking Price'],
-      ['354546112233445', 'Dell', 'Latitude 5420', '8 GB', '256 GB SSD', 'Intel Core i5 (11th Gen)', 85000, 92000],
-      ['', 'HP', 'EliteBook 840', '16 GB', '512 GB SSD', 'Intel Core i7 (11th Gen)', 110000, 125000],
+      ['Serial Number', 'Brand', 'Model', 'RAM', 'Storage', 'Processor', 'Purchase Price', 'Asking Price'],
     ])
     ws['!cols'] = [{ wch: 18 }, { wch: 12 }, { wch: 20 }, { wch: 8 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 14 }]
     const wb = XLSX.utils.book_new()
@@ -256,7 +241,7 @@ function ImportContent() {
               <tbody>
                 {rows.slice(0, 5).map((r, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid var(--border)', opacity: r.error ? 0.55 : 1 }}>
-                    <td style={{ padding: '9px 14px', fontFamily: 'monospace', fontSize: 12, color: r.imei ? 'var(--text-2)' : 'var(--text-3)' }}>{r.imei ?? 'No serial'}</td>
+                    <td style={{ padding: '9px 14px', fontFamily: 'monospace', fontSize: 12, color: 'var(--text-2)' }}>{r.imei || '—'}</td>
                     <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text)' }}>{r.brand || '—'}</td>
                     <td style={{ padding: '9px 14px', fontSize: 13, color: 'var(--text)' }}>{r.model || '—'}</td>
                     <td style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-2)' }}>{r.ram || '—'}</td>

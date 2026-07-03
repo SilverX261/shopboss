@@ -25,6 +25,9 @@ export async function POST(request: Request) {
   const exchangeValue = isExchange ? parseFloat(form.get('exchange_value') as string) || 0 : 0
   const exchangeModel = isExchange ? ((form.get('exchange_laptop_model') as string) || '').trim() || null : null
   const exchangeCondition = isExchange ? ((form.get('exchange_laptop_condition') as string) || '').trim() || null : null
+  const below_floor = form.get('below_floor') === 'true'
+  const floor_price_at_sale_raw = form.get('floor_price_at_sale') as string | null
+  const floor_price_at_sale = floor_price_at_sale_raw ? parseFloat(floor_price_at_sale_raw) || null : null
 
   // Parse bundle addons
   type AddonAccessory = { category_id: string; name: string; qty: number; cost_per_unit: number }
@@ -97,6 +100,8 @@ export async function POST(request: Request) {
       exchange_laptop_model: exchangeModel,
       exchange_laptop_condition: exchangeCondition,
     }),
+    below_floor,
+    ...(floor_price_at_sale !== null && { floor_price_at_sale }),
     ...(hasAddons && { sale_addons: saleAddons }),
   }
 
@@ -247,7 +252,7 @@ export async function POST(request: Request) {
       isLarge ? '🚨 Large sale!' : null,
       `⚡ Sale recorded - ${fmtTime()}`,
       `${laptop.brand} ${laptop.model}${specsLine ? ' - ' + specsLine : ''}`,
-      `IMEI: ...${laptop.imei.slice(-6)}`,
+      laptop.imei ? `IMEI: ...${laptop.imei.slice(-6)}` : null,
       `Price: ${fmtRs(sale_price)}`,
       `Payment: ${payment_type.replace(/_/g, ' ')}`,
       `Profit: ${fmtRs(profit)} (${sale_price ? Math.round((profit / sale_price) * 100) : 0}%)`,

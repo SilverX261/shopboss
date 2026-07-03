@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, Package, ShoppingCart, Boxes, CreditCard,
   Users, Monitor, BarChart2, Receipt, Settings, Wallet,
-  UserCircle, ChevronRight, LogOut,
+  UserCircle, ChevronRight, LogOut, Tag, Truck,
 } from 'lucide-react'
 import { useDashboard } from '@/components/layout/DashboardContext'
 import { createClient } from '@/lib/supabase/client'
@@ -23,6 +23,8 @@ const FINANCE_NAV = [
 
 const STOCK_NAV = [
   { href: '/accessories', label: 'Accessories', icon: Boxes },
+  { href: '/price-list',  label: 'Price List',  icon: Tag },
+  { href: '/suppliers',   label: 'Suppliers',   icon: Truck },
 ] as const
 
 const TEAM_NAV = [
@@ -46,6 +48,8 @@ const STAFF_NAV = [
   { href: '/sales/new', label: 'New Sale',  icon: ShoppingCart },
   { href: '/inventory', label: 'Inventory', icon: Package },
   { href: '/udhaar',    label: 'Udhaar',    icon: CreditCard },
+  { href: '/price-list', label: 'Price List', icon: Tag },
+  { href: '/suppliers', label: 'Suppliers', icon: Truck },
 ] as const
 
 const PLAN_LABELS: Record<string, string> = {

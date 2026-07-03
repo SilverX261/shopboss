@@ -9,12 +9,11 @@ import { useDashboard } from '@/components/layout/DashboardContext'
 import {
   Search, ArrowLeft, ArrowRight, Check, Banknote, Landmark, NotebookPen,
   Laptop as LaptopIcon, RefreshCw, Plus, X, ChevronDown, ChevronRight as ChevronRightIcon,
-  AlertCircle, Download,
+  AlertCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Fuse from 'fuse.js'
 import type { AccessoryCategory } from '@/lib/types'
-import { downloadReceipt } from '@/lib/utils/receipt'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -22,7 +21,7 @@ interface StockLaptop {
   id: string
   brand: string
   model: string
-  imei: string | null
+  imei: string
   condition?: string | null
   specs: Record<string, unknown>
   purchase_price: number
@@ -329,7 +328,7 @@ function StepDetails({
         </div>
         <div style={{ minWidth: 0 }}>
           <p style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15 }}>{laptop.brand} {laptop.model}</p>
-          <p style={{ color: 'var(--text-3)', fontSize: 12 }}>{specsLine(laptop.specs ?? {}) || '—'} \xb7 S/N {laptop.imei ? `…${laptop.imei.slice(-6)}` : 'No serial'}</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 12 }}>{specsLine(laptop.specs ?? {}) || '—'} \xb7 S/N …{laptop.imei.slice(-6)}</p>
         </div>
         <div style={{ marginLeft: 'auto', textAlign: 'right', flexShrink: 0 }}>
           <p style={{ color: 'var(--text-3)', fontSize: 11 }}>Asking</p>
@@ -780,7 +779,7 @@ function StepConfirm({
 
   const rows: [string, string, string?][] = [
     ['Laptop', `${laptop.brand} ${laptop.model}`],
-    ['Serial No.', laptop.imei ? `…${laptop.imei.slice(-6)}` : 'No serial'],
+    ['Serial No.', `…${laptop.imei.slice(-6)}`],
     ['Purchase price', fmtRs(laptop.purchase_price)],
   ]
 
@@ -913,29 +912,7 @@ function MarketPromptModal({ laptop, shopId, onDone }: { laptop: StockLaptop; sh
 
 // ─── Success ──────────────────────────────────────────────────────────────────
 
-function SuccessScreen({
-  profit, exchanged, onAnother, isStaff, receiptData,
-}: {
-  profit: number
-  exchanged: boolean
-  onAnother: () => void
-  isStaff?: boolean
-  receiptData: import('@/lib/utils/receipt').ReceiptData | null
-}) {
-  const [downloading, setDownloading] = useState(false)
-
-  const handleDownload = async () => {
-    if (!receiptData) return
-    setDownloading(true)
-    try {
-      await downloadReceipt(receiptData)
-    } catch {
-      toast.error('Could not generate receipt. Please try again.')
-    } finally {
-      setDownloading(false)
-    }
-  }
-
+function SuccessScreen({ profit, exchanged, onAnother, isStaff }: { profit: number; exchanged: boolean; onAnother: () => void; isStaff?: boolean }) {
   return (
     <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 14, padding: '40px 24px', textAlign: 'center' }}>
       <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--success-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
@@ -951,17 +928,6 @@ function SuccessScreen({
         <p style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 24 }}>
           Old laptop added to inventory as used stock.
         </p>
-      )}
-      {receiptData && (
-        <div style={{ marginBottom: 20 }}>
-          <button
-            onClick={handleDownload}
-            disabled={downloading}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'var(--info-bg)', border: '1px solid var(--info-border)', borderRadius: 8, padding: '10px 18px', color: 'var(--info)', fontWeight: 600, fontSize: 13, cursor: downloading ? 'not-allowed' : 'pointer', opacity: downloading ? 0.7 : 1 }}
-          >
-            <Download size={14} /> {downloading ? 'Generating…' : 'Download Receipt'}
-          </button>
-        </div>
       )}
       <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
         <button onClick={onAnother} style={{ background: 'var(--accent)', border: 'none', borderRadius: 8, padding: '10px 20px', color: 'var(--bg)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
@@ -1141,26 +1107,7 @@ function NewSaleInner() {
       )}
 
       {doneProfit !== null && !showMarketPrompt ? (
-        <SuccessScreen
-          profit={doneProfit}
-          exchanged={exchange.enabled}
-          onAnother={reset}
-          isStaff={isStaff}
-          receiptData={selected && shop ? {
-            shopName: shop.name,
-            whatsappNumber: shop.whatsapp_number,
-            soldAt: new Date().toISOString(),
-            brand: selected.brand,
-            model: selected.model,
-            processor: String((selected.specs ?? {}).processor ?? '') || null,
-            ram: String((selected.specs ?? {}).ram ?? '') || null,
-            storage: String((selected.specs ?? {}).storage ?? '') || null,
-            imei: selected.imei,
-            salePrice: parseFloat(details.sale_price) || 0,
-            paymentType: details.payment_type,
-            customerName: details.customer_name || null,
-          } : null}
-        />
+        <SuccessScreen profit={doneProfit} exchanged={exchange.enabled} onAnother={reset} isStaff={isStaff} />
       ) : doneProfit === null ? (
         <>
           <Steps step={step} />

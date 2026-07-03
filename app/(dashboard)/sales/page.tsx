@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useShop } from '@/hooks/useShop'
-import { Download, Search, X, AlertTriangle, Plus, ChevronDown, ChevronRight } from 'lucide-react'
+import { Download, Search, X, AlertTriangle, Plus, ChevronDown, ChevronRight, Printer } from 'lucide-react'
 import toast from 'react-hot-toast'
 import * as XLSX from 'xlsx'
+import { downloadReceipt } from '@/lib/utils/receipt'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,7 +22,9 @@ interface SaleRow {
   customer_phone: string | null
   bank_reference: string | null
   notes: string | null
-  laptop: { brand: string; model: string; imei: string; purchase_price: number } | null
+  below_floor: boolean
+  floor_price_at_sale: number | null
+  laptop: { brand: string; model: string; imei: string | null; purchase_price: number; specs: Record<string, unknown> | null } | null
   worker: { name: string } | null
 }
 
@@ -138,6 +141,66 @@ function Card({ label, value, accent }: { label: string; value: string; accent?:
   )
 }
 
+// ─── Mobile card ──────────────────────────────────────────────────────────────
+
+function SaleCard({ sale: s, onPrint, onVoid }: { sale: SaleRow; onPrint: () => void; onVoid: () => void }) {
+  const purchase = purchasePriceOf(s)
+  return (
+    <div style={{
+      background: 'var(--bg-2)',
+      border: `1px solid ${!s.is_voided && s.below_floor ? 'var(--danger-border)' : 'var(--border)'}`,
+      borderRadius: 12, padding: '14px 16px', opacity: s.is_voided ? 0.6 : 1,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <p style={{ color: 'var(--text)', fontWeight: 700, fontSize: 15 }}>{s.laptop?.brand} {s.laptop?.model}</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 11, fontFamily: 'monospace', marginTop: 2 }}>…{s.laptop?.imei?.slice(-6) ?? 'No serial'}</p>
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <p style={{ color: 'var(--text-3)', fontSize: 11 }}>{fmtDate(s.sold_at)}</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 11 }}>{fmtTime(s.sold_at)}</p>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, marginBottom: 10, flexWrap: 'wrap' }}>
+        <div><p style={{ color: 'var(--text-3)', fontSize: 10, textTransform: 'uppercase' }}>Sale</p><p style={{ color: 'var(--text)', fontWeight: 700 }}>{fmtRs(s.sale_price)}</p></div>
+        <div><p style={{ color: 'var(--text-3)', fontSize: 10, textTransform: 'uppercase' }}>Purchase</p><p style={{ color: 'var(--text-2)', fontWeight: 600 }}>{fmtRs(purchase)}</p></div>
+        <div><p style={{ color: 'var(--text-3)', fontSize: 10, textTransform: 'uppercase' }}>Profit</p><p style={{ color: s.profit >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 700 }}>{fmtRs(s.profit)}</p></div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+        {payBadge(s.payment_type)}
+        <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Sold by {s.worker?.name ?? 'Owner'}</span>
+        {s.customer_name && <span style={{ color: 'var(--text-3)', fontSize: 12 }}>· {s.customer_name}</span>}
+      </div>
+
+      {(s.is_voided || s.below_floor) && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+          {s.is_voided && <span style={{ background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Voided</span>}
+          {s.below_floor && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', color: 'var(--danger)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
+              <AlertTriangle size={11} /> Below floor
+            </span>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        {!s.is_voided && (
+          <>
+            <button onClick={onPrint} style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 7, padding: '8px 12px', color: 'var(--text-2)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              <Printer size={12} /> Print
+            </button>
+            <button onClick={onVoid} style={{ flex: 1, background: 'var(--bg-2)', border: '1px solid var(--danger-border)', borderRadius: 7, padding: '8px 12px', color: 'var(--danger)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+              Void
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function SalesPage() {
@@ -158,7 +221,8 @@ export default function SalesPage() {
       .from('sales')
       .select(`
         id, sale_price, payment_type, profit, sold_at, is_voided, customer_name, customer_phone, bank_reference, notes,
-        laptops ( brand, model, imei, purchase_price ),
+        below_floor, floor_price_at_sale,
+        laptops ( brand, model, imei, purchase_price, specs ),
         workers ( name )
       `)
       .eq('shop_id', shop.id)
@@ -218,7 +282,7 @@ export default function SalesPage() {
     if (search) {
       const q = search.toLowerCase()
       return (
-        (s.laptop?.imei.includes(q) ?? false) ||
+        (s.laptop?.imei?.includes(q) ?? false) ||
         (s.laptop?.model.toLowerCase().includes(q) ?? false) ||
         (s.laptop?.brand.toLowerCase().includes(q) ?? false) ||
         (s.customer_name ?? '').toLowerCase().includes(q)
@@ -236,6 +300,29 @@ export default function SalesPage() {
       udhaar: active.filter((s) => s.payment_type === 'udhaar').reduce((a, s) => a + s.sale_price, 0),
     }
   }, [filtered])
+
+  const handlePrint = async (s: SaleRow) => {
+    if (!s.laptop) { toast.error('No laptop details found for this sale.'); return }
+    try {
+      const specs = s.laptop.specs ?? {}
+      await downloadReceipt({
+        shopName: shop?.name ?? 'ShopBoss',
+        whatsappNumber: shop?.whatsapp_number ?? null,
+        soldAt: s.sold_at,
+        brand: s.laptop.brand,
+        model: s.laptop.model,
+        processor: String(specs.processor ?? '') || null,
+        ram: String(specs.ram ?? '') || null,
+        storage: String(specs.storage ?? '') || null,
+        imei: s.laptop.imei,
+        salePrice: s.sale_price,
+        paymentType: s.payment_type,
+        customerName: s.customer_name,
+      })
+    } catch {
+      toast.error('Could not generate receipt. Please try again.')
+    }
+  }
 
   const handleExport = () => {
     const rows = filtered.map((s) => ({
@@ -341,11 +428,23 @@ export default function SalesPage() {
             )}
           </div>
         ) : (
+          <>
+          {/* Mobile cards */}
+          <div className="sm:hidden">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {filtered.map((s) => (
+                <SaleCard key={s.id} sale={s} onPrint={() => handlePrint(s)} onVoid={() => setVoidSale(s)} />
+              ))}
+            </div>
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden sm:block">
           <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1020 }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  {['', 'Date', 'Laptop', 'Sale Price', 'Purchase', 'Profit', 'Payment', 'Customer', ''].map((h, i) => (
+                  {['', 'Date', 'Laptop', 'Sale Price', 'Purchase', 'Profit', 'Payment', 'Sold By', 'Customer', 'Flags', ''].map((h, i) => (
                     <th key={i} style={{ padding: '10px 14px', textAlign: 'left', color: 'var(--text-3)', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -359,7 +458,12 @@ export default function SalesPage() {
                     <Fragment key={s.id}>
                       <tr
                         onClick={() => toggle(s.id)}
-                        style={{ borderBottom: open ? 'none' : '1px solid var(--border)', opacity: s.is_voided ? 0.5 : 1, cursor: 'pointer' }}
+                        style={{
+                          borderBottom: open ? 'none' : '1px solid var(--border)',
+                          opacity: s.is_voided ? 0.5 : 1,
+                          cursor: 'pointer',
+                          background: !s.is_voided && s.below_floor ? 'rgba(239,68,68,0.06)' : undefined,
+                        }}
                       >
                         <td style={{ padding: '10px 14px', color: 'var(--text-3)' }}>
                           {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
@@ -377,15 +481,36 @@ export default function SalesPage() {
                         <td style={{ padding: '10px 14px', color: s.profit >= 0 ? 'var(--success)' : 'var(--danger)', fontSize: 13, fontWeight: 600 }}>{fmtRs(s.profit)}</td>
                         <td style={{ padding: '10px 14px' }}>{payBadge(s.payment_type)}</td>
                         <td style={{ padding: '10px 14px', color: 'var(--text-2)', fontSize: 13 }}>
+                          {s.worker?.name ?? 'Owner'}
+                        </td>
+                        <td style={{ padding: '10px 14px', color: 'var(--text-2)', fontSize: 13 }}>
                           {s.customer_name || '—'}
                         </td>
                         <td style={{ padding: '10px 14px' }}>
-                          {s.is_voided && <span style={{ background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Voided</span>}
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {s.is_voided && <span style={{ background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Voided</span>}
+                            {s.below_floor && (
+                              <span title={s.floor_price_at_sale ? `Floor was ${fmtRs(s.floor_price_at_sale)}` : undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', color: 'var(--danger)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
+                                <AlertTriangle size={11} /> Below floor
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ padding: '10px 14px' }}>
+                          {!s.is_voided && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handlePrint(s) }}
+                              title="Print receipt"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 8px', color: 'var(--text-2)', fontSize: 11, cursor: 'pointer' }}
+                            >
+                              <Printer size={12} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                       {open && (
                         <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-3)' }}>
-                          <td colSpan={9} style={{ padding: '16px 18px' }}>
+                          <td colSpan={11} style={{ padding: '16px 18px' }}>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
                               {[
                                 ['Serial Number', s.laptop?.imei ?? '—'],
@@ -397,7 +522,8 @@ export default function SalesPage() {
                                 ...(s.customer_name ? [['Customer', s.customer_name] as [string, string]] : []),
                                 ...(s.customer_phone ? [['Phone', s.customer_phone] as [string, string]] : []),
                                 ...(s.bank_reference ? [['Bank reference', s.bank_reference] as [string, string]] : []),
-                                ...(s.worker?.name ? [['Recorded by', s.worker.name] as [string, string]] : []),
+                                ['Sold by', s.worker?.name ?? 'Owner'],
+                                ...(s.below_floor ? [['Floor price', s.floor_price_at_sale ? fmtRs(s.floor_price_at_sale) : 'Below floor'] as [string, string]] : []),
                               ].map(([label, value]) => (
                                 <div key={label}>
                                   <p style={{ color: 'var(--text-3)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 3 }}>{label}</p>
@@ -433,6 +559,8 @@ export default function SalesPage() {
               <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Showing {filtered.length} of {sales.length} sales</span>
             </div>
           </div>
+          </div>
+          </>
         )}
       </div>
     </>

@@ -8,6 +8,7 @@ import { useDashboard } from '@/components/layout/DashboardContext'
 import { canUse } from '@/lib/utils/plan-gates'
 import {
   Search, Plus, Upload, Download, Copy, Check, ShoppingCart, X, Pencil, Package,
+  ShieldAlert, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Fuse from 'fuse.js'
@@ -69,8 +70,11 @@ function ageTint(l: LaptopRow): string | undefined {
 
 // â”€â”€â”€ IMEI copy cell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function ImeiCell({ imei }: { imei: string }) {
+function ImeiCell({ imei }: { imei: string | null }) {
   const [copied, setCopied] = useState(false)
+  if (!imei) {
+    return <span style={{ color: 'var(--text-3)', fontSize: 12, fontFamily: 'monospace' }}>No serial</span>
+  }
   const copy = () => {
     navigator.clipboard.writeText(imei)
     setCopied(true)
@@ -86,7 +90,7 @@ function ImeiCell({ imei }: { imei: string }) {
         color: 'var(--text-2)', fontSize: 12, fontFamily: 'monospace', padding: 0,
       }}
     >
-      {imei.slice(0, 8)}…
+      {imei.slice(0, 8)}{imei.length > 8 ? '…' : ''}
       {copied ? <Check size={12} style={{ color: 'var(--success)' }} /> : <Copy size={12} />}
     </button>
   )
@@ -247,7 +251,7 @@ function HistoryModal({ laptop, onClose }: { laptop: LaptopRow; onClose: () => v
         </div>
         <div style={{ marginBottom: 12 }}>
           <p style={{ color: 'var(--text)', fontWeight: 600 }}>{laptop.brand} {laptop.model}</p>
-          <p style={{ color: 'var(--text-3)', fontSize: 12, fontFamily: 'monospace' }}>S/N: {laptop.imei}</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 12, fontFamily: 'monospace' }}>S/N: {laptop.imei ?? 'No serial'}</p>
         </div>
         {s ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -387,6 +391,7 @@ export default function InventoryPage() {
   const [filter, setFilter] = useState<FilterKey>('all')
   const [historyLaptop, setHistoryLaptop] = useState<LaptopRow | null>(null)
   const [editLaptop, setEditLaptop] = useState<LaptopRow | null>(null)
+  const [warrantyOpen, setWarrantyOpen] = useState(false)
 
   const load = useCallback(async () => {
     if (!shop) return
@@ -435,6 +440,23 @@ export default function InventoryPage() {
   }
 
   const handleExport = () => { window.location.href = '/api/inventory/export' }
+
+  // Send an in-stock laptop to the supplier for warranty
+  const handleMarkSent = async (l: LaptopRow) => {
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('laptops')
+      .update({ warranty_status: 'sent', warranty_sent_at: new Date().toISOString() })
+      .eq('id', l.id)
+    if (error) { toast.error('Could not mark as sent for warranty.'); return }
+    toast.success(`${l.brand} ${l.model} marked as sent for warranty`)
+    load()
+  }
+
+  const underWarranty = useMemo(
+    () => laptops.filter((l) => l.warranty_status === 'sent'),
+    [laptops]
+  )
 
   // Fuzzy search index
   const fuse = useMemo(
@@ -561,6 +583,50 @@ export default function InventoryPage() {
           </div>
         </div>
 
+        {/* Under Warranty section */}
+        {underWarranty.length > 0 && (
+          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, marginBottom: 22, overflow: 'hidden' }}>
+            <button
+              onClick={() => setWarrantyOpen((v) => !v)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', padding: '14px 18px', cursor: 'pointer', textAlign: 'left' }}
+            >
+              {warrantyOpen ? <ChevronDown size={15} style={{ color: 'var(--text-3)' }} /> : <ChevronRight size={15} style={{ color: 'var(--text-3)' }} />}
+              <ShieldAlert size={15} style={{ color: 'var(--warning)' }} />
+              <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>
+                Under Warranty ({underWarranty.length})
+              </span>
+            </button>
+            {warrantyOpen && (
+              <div style={{ overflowX: 'auto', borderTop: '1px solid var(--border)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                      {['Model', 'Supplier', 'Date Sent', 'Days Outstanding'].map((h) => (
+                        <th key={h} style={{ padding: '10px 14px', textAlign: 'left', color: 'var(--text-3)', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {underWarranty.map((l) => {
+                      const days = l.warranty_sent_at ? Math.floor((Date.now() - new Date(l.warranty_sent_at).getTime()) / 86_400_000) : 0
+                      return (
+                        <tr key={l.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '10px 14px', color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>{l.brand} {l.model}</td>
+                          <td style={{ padding: '10px 14px', color: 'var(--text-2)', fontSize: 13 }}>{l.supplier_name ?? '—'}</td>
+                          <td style={{ padding: '10px 14px', color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(l.warranty_sent_at ?? null)}</td>
+                          <td style={{ padding: '10px 14px', color: days > 14 ? 'var(--danger)' : 'var(--warning)', fontSize: 13, fontWeight: 600 }}>
+                            {days} day{days !== 1 ? 's' : ''}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Toolbar */}
         <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ position: 'relative', flex: 1, minWidth: 220 }}>
@@ -613,7 +679,7 @@ export default function InventoryPage() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <p style={{ color: 'var(--copper, var(--accent))', fontWeight: 700, fontSize: 16, lineHeight: 1.2 }}>{l.brand} {l.model}</p>
-                        <p style={{ color: 'var(--text-3)', fontSize: 11, fontFamily: 'monospace', marginTop: 2 }}>{l.imei}</p>
+                        <p style={{ color: 'var(--text-3)', fontSize: 11, fontFamily: 'monospace', marginTop: 2 }}>{l.imei ?? 'No serial'}</p>
                       </div>
                       <StatusBadge laptop={l} />
                     </div>
@@ -739,6 +805,15 @@ export default function InventoryPage() {
                               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', color: 'var(--text-2)', fontSize: 11, fontWeight: 500, cursor: 'pointer' }}
                             >
                               History
+                            </button>
+                          )}
+                          {!isStaff && l.status === 'in_stock' && l.warranty_status !== 'sent' && (
+                            <button
+                              onClick={() => handleMarkSent(l)}
+                              title="Send to supplier for warranty"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--warning-bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 8px', color: 'var(--warning)', fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            >
+                              <ShieldAlert size={11} /> Warranty
                             </button>
                           )}
                           {!isStaff && (

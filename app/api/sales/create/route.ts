@@ -151,7 +151,7 @@ export async function POST(request: Request) {
       isLarge ? '🚨 Large sale alert!' : null,
       `⚡ Sale Alert — ${fmtTime()}`,
       `${laptop.brand} ${laptop.model}${specsLine ? ' · ' + specsLine : ''}`,
-      `IMEI: ...${laptop.imei.slice(-6)}`,
+      laptop.imei ? `IMEI: ...${laptop.imei.slice(-6)}` : null,
       `Price: ${fmtRs(sale_price)}`,
       `Payment: ${payment_type.replace(/_/g, ' ')}`,
       `Worker: ${session.worker_name}${profitLine}`,

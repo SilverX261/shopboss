@@ -191,14 +191,14 @@ function StepLaptop({ shopId, onNext, onSkip }: { shopId: string; onNext: () => 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (form.imei.length !== 15 || !/^\d+$/.test(form.imei)) { toast.error('Serial number must be exactly 15 digits'); return }
+    if (form.imei.trim().length > 0 && form.imei.trim().length < 5) { toast.error('Serial number must be at least 5 characters'); return }
     if (!form.brand.trim() || !form.model.trim()) { toast.error('Brand and model are required'); return }
     if (!form.purchase_price) { toast.error('Purchase price is required'); return }
     setLoading(true)
     const supabase = createClient()
     const { error } = await supabase.from('laptops').insert({
       shop_id: shopId,
-      imei: form.imei,
+      imei: form.imei.trim() || null,
       brand: form.brand.trim(),
       model: form.model.trim(),
       purchase_price: parseFloat(form.purchase_price),
@@ -222,10 +222,10 @@ function StepLaptop({ shopId, onNext, onSkip }: { shopId: string; onNext: () => 
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
         <div style={{ gridColumn: '1 / -1' }}>
-          <Field label="Serial Number (15 digits)" sub="Scan the barcode or type it manually">
-            <input style={inputStyle} placeholder="354546112233445" value={form.imei}
-              onChange={e => setForm(p => ({ ...p, imei: e.target.value.replace(/\D/g, '').slice(0, 15) }))}
-              maxLength={15} required />
+          <Field label="Serial Number (optional)" sub="IMEI, service tag, or any serial number">
+            <input style={inputStyle} placeholder="e.g. 354546112233445 or SVC-TAG" value={form.imei}
+              onChange={e => setForm(p => ({ ...p, imei: e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() }))}
+              maxLength={30} />
           </Field>
         </div>
         <Field label="Brand *">

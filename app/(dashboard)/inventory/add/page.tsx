@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import type { Supplier } from '@/lib/types'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useShop } from '@/hooks/useShop'
@@ -182,6 +183,54 @@ function SingleAddForm({ plan }: { plan: string }) {
   const [imeiError, setImeiError] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // Supplier dropdown state
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [supplierId, setSupplierId] = useState('')
+  const [showNewSupplier, setShowNewSupplier] = useState(false)
+  const [newSup, setNewSup] = useState({ name: '', phone: '', city: '' })
+  const [savingSupplier, setSavingSupplier] = useState(false)
+
+  useEffect(() => {
+    if (!shop) return
+    const supabase = createClient()
+    supabase
+      .from('suppliers')
+      .select('*')
+      .eq('shop_id', shop.id)
+      .order('name')
+      .then(({ data }) => setSuppliers((data as Supplier[]) ?? []))
+  }, [shop])
+
+  const saveNewSupplier = async () => {
+    if (!shop) return
+    const name = newSup.name.trim()
+    if (!name) { toast.error('Supplier name is required'); return }
+    setSavingSupplier(true)
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from('suppliers')
+      .insert({
+        shop_id: shop.id,
+        name,
+        phone: newSup.phone.trim() || null,
+        city: newSup.city.trim() || null,
+      })
+      .select('*')
+      .single()
+    setSavingSupplier(false)
+    if (error || !data) {
+      if (error?.code === '23505') { toast.error('A supplier with this name already exists.'); return }
+      toast.error('Could not save supplier. Please try again.')
+      return
+    }
+    const created = data as Supplier
+    setSuppliers((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+    setSupplierId(created.id)
+    setShowNewSupplier(false)
+    setNewSup({ name: '', phone: '', city: '' })
+    toast.success(`Supplier "${created.name}" added`)
+  }
+
   const set = (k: keyof LaptopForm, v: string) => setForm((p) => ({ ...p, [k]: v }))
 
   const handleImeiBlur = async () => {
@@ -221,7 +270,7 @@ function SingleAddForm({ plan }: { plan: string }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!shop) return
-    if (form.imei.trim().length < 5) {
+    if (form.imei.trim().length > 0 && form.imei.trim().length < 5) {
       setImeiError('Serial number must be at least 5 characters')
       return
     }
@@ -231,10 +280,11 @@ function SingleAddForm({ plan }: { plan: string }) {
     if (form.asking_price && (isNaN(asking) || asking < 0)) { toast.error('Enter a valid asking price'); return }
 
     // Validate supplier-credit fields
+    const selectedSupplier = suppliers.find((s) => s.id === supplierId) ?? null
     const onCredit = form.supplier_payment === 'credit'
     let owed = 0
     if (onCredit) {
-      if (!form.supplier_name.trim()) { toast.error('Supplier name is required for credit purchases'); return }
+      if (!selectedSupplier) { toast.error('Select a supplier for credit purchases'); return }
       owed = form.amount_owed ? parseFloat(form.amount_owed) : price
       if (isNaN(owed) || owed <= 0) { toast.error('Enter a valid amount owed'); return }
     }
@@ -247,7 +297,7 @@ function SingleAddForm({ plan }: { plan: string }) {
       .from('laptops')
       .insert({
         shop_id: shop.id,
-        imei: form.imei.trim(),
+        imei: form.imei.trim() || null,
         brand: form.brand.trim(),
         model: form.model.trim(),
         specs: {
@@ -260,7 +310,8 @@ function SingleAddForm({ plan }: { plan: string }) {
         purchase_price: price,
         asking_price: asking,
         purchase_date: form.purchase_date || todayISO(),
-        supplier_name: form.supplier_name.trim() || null,
+        supplier_id: selectedSupplier?.id ?? null,
+        supplier_name: selectedSupplier?.name ?? (form.supplier_name.trim() || null),
         supplier_payment: form.supplier_payment,
         notes: form.notes.trim() || null,
         status: 'in_stock',
@@ -284,7 +335,7 @@ function SingleAddForm({ plan }: { plan: string }) {
       const { error: scErr } = await supabase.from('supplier_credits').insert({
         shop_id: shop.id,
         laptop_id: laptop.id,
-        supplier_name: form.supplier_name.trim(),
+        supplier_name: selectedSupplier?.name ?? form.supplier_name.trim(),
         amount_owed: owed,
         amount_paid: 0,
         due_date: form.due_date || null,
@@ -309,7 +360,7 @@ function SingleAddForm({ plan }: { plan: string }) {
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Serial Number */}
       <div>
-        <label style={labelStyle}>Serial Number / Service Tag *</label>
+        <label style={labelStyle}>Serial Number / Service Tag (optional)</label>
         <div style={{ position: 'relative' }}>
           <input
             value={form.imei}
@@ -318,7 +369,6 @@ function SingleAddForm({ plan }: { plan: string }) {
             maxLength={20}
             placeholder="e.g. 5CG1234567 or 354546112233445"
             style={{ ...inputStyle, border: `1px solid ${imeiError ? 'var(--danger)' : 'var(--border)'}`, paddingRight: 36 }}
-            required
           />
           {lookupLoading && (
             <Search size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--accent)', animation: 'spin 1s linear infinite' }} />
@@ -442,8 +492,25 @@ function SingleAddForm({ plan }: { plan: string }) {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
           <div>
-            <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Supplier name (optional)</label>
-            <input value={form.supplier_name} onChange={(e) => set('supplier_name', e.target.value)} placeholder="e.g. Hall Road Traders" style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }} />
+            <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Supplier (optional)</label>
+            <select
+              value={showNewSupplier ? '__new__' : supplierId}
+              onChange={(e) => {
+                if (e.target.value === '__new__') {
+                  setShowNewSupplier(true)
+                } else {
+                  setShowNewSupplier(false)
+                  setSupplierId(e.target.value)
+                }
+              }}
+              style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }}
+            >
+              <option value="">No supplier</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+              <option value="__new__">Add new supplier…</option>
+            </select>
           </div>
           <div>
             <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Payment</label>
@@ -466,6 +533,34 @@ function SingleAddForm({ plan }: { plan: string }) {
             </div>
           </div>
         </div>
+
+        {showNewSupplier && (
+          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 14 }}>
+            <p style={{ color: 'var(--text-2)', fontSize: 12, fontWeight: 600, marginBottom: 10 }}>New Supplier</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
+              <div>
+                <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Name *</label>
+                <input value={newSup.name} onChange={(e) => setNewSup((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. Hafiz Traders" style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>Phone</label>
+                <input value={newSup.phone} onChange={(e) => setNewSup((p) => ({ ...p, phone: e.target.value }))} placeholder="03xx-xxxxxxx" style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ ...labelStyle, textTransform: 'none', fontSize: 11 }}>City</label>
+                <input value={newSup.city} onChange={(e) => setNewSup((p) => ({ ...p, city: e.target.value }))} placeholder="Lahore" style={{ ...inputStyle, padding: '8px 10px', fontSize: 13 }} />
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={saveNewSupplier}
+              disabled={savingSupplier}
+              style={{ background: 'var(--accent)', border: 'none', borderRadius: 7, padding: '8px 16px', color: 'var(--bg)', fontSize: 12, fontWeight: 600, cursor: savingSupplier ? 'not-allowed' : 'pointer', opacity: savingSupplier ? 0.7 : 1 }}
+            >
+              {savingSupplier ? 'Saving…' : 'Save & Select'}
+            </button>
+          </div>
+        )}
 
         {onCredit && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
