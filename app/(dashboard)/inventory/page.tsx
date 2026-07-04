@@ -290,6 +290,7 @@ function EditModal({
   onClose: () => void
   onSave: (id: string, updates: Record<string, unknown>) => Promise<void>
 }) {
+  const { isStaff } = useDashboard()
   const specs = (laptop.specs ?? {}) as Record<string, unknown>
   const lr = laptop as unknown as Record<string, unknown>
   const [brand, setBrand] = useState(laptop.brand ?? '')
@@ -299,6 +300,7 @@ function EditModal({
   const [storage, setStorage] = useState(String(specs.storage ?? ''))
   const [screen, setScreen] = useState(String(specs.screen ?? ''))
   const [condition, setCondition] = useState(String(lr.condition ?? ''))
+  const [quantity, setQuantity] = useState(String(lr.quantity ?? 1))
   const [purchasePrice, setPurchasePrice] = useState(String(laptop.purchase_price ?? ''))
   const [askingPrice, setAskingPrice] = useState(String(laptop.asking_price ?? ''))
   const [notes, setNotes] = useState(String(lr.notes ?? ''))
@@ -375,9 +377,12 @@ function EditModal({
     if (!brand.trim()) { toast.error('Brand is required'); return }
     if (!model.trim()) { toast.error('Model is required'); return }
     if (isNaN(pp) || pp < 0) { toast.error('Enter a valid purchase price'); return }
+    const qty = parseInt(quantity, 10)
+    if (!isStaff && (isNaN(qty) || qty < 1)) { toast.error('Enter a valid quantity (min 1)'); return }
     setSaving(true)
     const selectedSupplier = suppliers.find((s) => s.id === supplierId) ?? null
     await onSave(laptop.id, {
+      ...(!isStaff ? { quantity: qty, is_bulk: qty > 1 } : {}),
       brand: brand.trim(),
       model: model.trim(),
       specs: { ...specs, processor: processor.trim(), ram: ram.trim(), storage: storage.trim(), screen: screen.trim() },
@@ -420,6 +425,9 @@ function EditModal({
             <div><label style={mLabel}>Screen size</label><input value={screen} onChange={(e) => setScreen(e.target.value)} style={mInput} placeholder='14"' /></div>
           </div>
           <div><label style={mLabel}>Condition</label><input value={condition} onChange={(e) => setCondition(e.target.value)} style={mInput} placeholder="Good, Fair, Poor…" /></div>
+          {!isStaff && (
+            <div><label style={mLabel}>Quantity (units in stock)</label><input type="number" min={1} value={quantity} onChange={(e) => setQuantity(e.target.value)} style={mInput} /></div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div><label style={mLabel}>Purchase price (Rs) *</label><input type="number" min={0} value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} style={mInput} /></div>
             <div><label style={mLabel}>Asking price (Rs)</label><input type="number" min={0} value={askingPrice} onChange={(e) => setAskingPrice(e.target.value)} style={mInput} /></div>
