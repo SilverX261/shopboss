@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Fuse from 'fuse.js'
-import type { Laptop } from '@/lib/types'
+import type { Laptop, Supplier } from '@/lib/types'
 
 // â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -301,9 +301,63 @@ function EditModal({
   const [condition, setCondition] = useState(String(lr.condition ?? ''))
   const [purchasePrice, setPurchasePrice] = useState(String(laptop.purchase_price ?? ''))
   const [askingPrice, setAskingPrice] = useState(String(laptop.asking_price ?? ''))
-  const [supplier, setSupplier] = useState(String(lr.supplier_name ?? ''))
   const [notes, setNotes] = useState(String(lr.notes ?? ''))
   const [saving, setSaving] = useState(false)
+
+  // Supplier dropdown state (same pattern as the Add Laptop form)
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [supplierId, setSupplierId] = useState(String(lr.supplier_id ?? ''))
+  const [showNewSupplier, setShowNewSupplier] = useState(false)
+  const [newSup, setNewSup] = useState({ name: '', phone: '', city: '' })
+  const [savingSupplier, setSavingSupplier] = useState(false)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from('suppliers')
+      .select('*')
+      .eq('shop_id', laptop.shop_id)
+      .order('name')
+      .then(({ data }) => {
+        const list = (data as Supplier[]) ?? []
+        setSuppliers(list)
+        // Legacy rows may have supplier_name without supplier_id — match by name
+        if (!lr.supplier_id && lr.supplier_name) {
+          const match = list.find((s) => s.name === lr.supplier_name)
+          if (match) setSupplierId(match.id)
+        }
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [laptop.shop_id])
+
+  const saveNewSupplier = async () => {
+    const name = newSup.name.trim()
+    if (!name) { toast.error('Supplier name is required'); return }
+    setSavingSupplier(true)
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from('suppliers')
+      .insert({
+        shop_id: laptop.shop_id,
+        name,
+        phone: newSup.phone.trim() || null,
+        city: newSup.city.trim() || null,
+      })
+      .select('*')
+      .single()
+    setSavingSupplier(false)
+    if (error || !data) {
+      if (error?.code === '23505') { toast.error('A supplier with this name already exists.'); return }
+      toast.error('Could not save supplier. Please try again.')
+      return
+    }
+    const created = data as Supplier
+    setSuppliers((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+    setSupplierId(created.id)
+    setShowNewSupplier(false)
+    setNewSup({ name: '', phone: '', city: '' })
+    toast.success(`Supplier "${created.name}" added`)
+  }
 
   const mInput: React.CSSProperties = {
     width: '100%', background: 'var(--bg-3)', border: '1px solid var(--border)',
@@ -322,6 +376,7 @@ function EditModal({
     if (!model.trim()) { toast.error('Model is required'); return }
     if (isNaN(pp) || pp < 0) { toast.error('Enter a valid purchase price'); return }
     setSaving(true)
+    const selectedSupplier = suppliers.find((s) => s.id === supplierId) ?? null
     await onSave(laptop.id, {
       brand: brand.trim(),
       model: model.trim(),
@@ -329,7 +384,8 @@ function EditModal({
       condition: condition.trim() || null,
       purchase_price: pp,
       asking_price: isNaN(ap) || ap < 0 ? laptop.asking_price : ap,
-      supplier_name: supplier.trim() || null,
+      supplier_id: selectedSupplier?.id ?? null,
+      supplier_name: selectedSupplier?.name ?? null,
       notes: notes.trim() || null,
     })
     setSaving(false)
@@ -368,7 +424,54 @@ function EditModal({
             <div><label style={mLabel}>Purchase price (Rs) *</label><input type="number" min={0} value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} style={mInput} /></div>
             <div><label style={mLabel}>Asking price (Rs)</label><input type="number" min={0} value={askingPrice} onChange={(e) => setAskingPrice(e.target.value)} style={mInput} /></div>
           </div>
-          <div><label style={mLabel}>Supplier</label><input value={supplier} onChange={(e) => setSupplier(e.target.value)} style={mInput} placeholder="Supplier name" /></div>
+          <div>
+            <label style={mLabel}>Supplier</label>
+            <select
+              value={showNewSupplier ? '__new__' : supplierId}
+              onChange={(e) => {
+                if (e.target.value === '__new__') {
+                  setShowNewSupplier(true)
+                } else {
+                  setShowNewSupplier(false)
+                  setSupplierId(e.target.value)
+                }
+              }}
+              style={mInput}
+            >
+              <option value="">No supplier</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+              <option value="__new__">Add new supplier…</option>
+            </select>
+          </div>
+          {showNewSupplier && (
+            <div style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+              <p style={{ color: 'var(--text-2)', fontSize: 12, fontWeight: 600, marginBottom: 10 }}>New Supplier</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
+                <div>
+                  <label style={mLabel}>Name *</label>
+                  <input value={newSup.name} onChange={(e) => setNewSup((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. Hafiz Traders" style={mInput} />
+                </div>
+                <div>
+                  <label style={mLabel}>Phone</label>
+                  <input value={newSup.phone} onChange={(e) => setNewSup((p) => ({ ...p, phone: e.target.value }))} placeholder="03xx-xxxxxxx" style={mInput} />
+                </div>
+                <div>
+                  <label style={mLabel}>City</label>
+                  <input value={newSup.city} onChange={(e) => setNewSup((p) => ({ ...p, city: e.target.value }))} placeholder="Lahore" style={mInput} />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={saveNewSupplier}
+                disabled={savingSupplier}
+                style={{ background: 'var(--accent)', border: 'none', borderRadius: 7, padding: '8px 16px', color: 'var(--bg)', fontSize: 12, fontWeight: 600, cursor: savingSupplier ? 'not-allowed' : 'pointer', opacity: savingSupplier ? 0.7 : 1 }}
+              >
+                {savingSupplier ? 'Saving…' : 'Save & Select'}
+              </button>
+            </div>
+          )}
           <div><label style={mLabel}>Notes</label><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} style={{ ...mInput, resize: 'vertical', lineHeight: 1.5 }} placeholder="Any notes…" /></div>
         </div>
 
@@ -436,6 +539,7 @@ export default function InventoryPage() {
         condition: updates.condition,
         purchase_price: updates.purchase_price,
         asking_price: updates.asking_price,
+        supplier_id: updates.supplier_id,
         supplier_name: updates.supplier_name,
         notes: updates.notes,
       })
